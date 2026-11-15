@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { CalendarPlus, UserPlus, X } from 'lucide-react';
-import { FIELD_LIMITS, LeaveEntry, ProductionLine, Worker } from '../types';
+import { FIELD_LIMITS, LeaveEntry, ProductionLine, Supervisor, Worker } from '../types';
 import { formatDisplayDate, getArabicDayName } from '../lib/dateUtils';
 import { createWorker, directAddLeave } from '../services/firestoreService';
 import { MAIN_ADMIN_SUPERVISOR_ID } from '../lib/seedData';
+import { canSupervisorControlWorker } from '../lib/permissions';
 
 interface DirectAddLeaveModalProps {
   open: boolean;
@@ -14,6 +15,7 @@ interface DirectAddLeaveModalProps {
   leaves: LeaveEntry[];
   isMainAdmin: boolean;
   supervisorId: string;
+  supervisorRecord: Supervisor | null;
   actorUid: string;
   actorName: string;
   onSuccessToast: (msg: string) => void;
@@ -28,6 +30,7 @@ export function DirectAddLeaveModal({
   leaves,
   isMainAdmin,
   supervisorId,
+  supervisorRecord,
   actorUid,
   actorName,
   onSuccessToast,
@@ -46,7 +49,7 @@ export function DirectAddLeaveModal({
     (w) =>
       w.active &&
       w.lineId === line.id &&
-      (isMainAdmin || w.supervisorId === supervisorId)
+      canSupervisorControlWorker(w, isMainAdmin, supervisorRecord)
   );
   const chosenExisting = eligibleWorkers.find((w) => w.id === workerId) || null;
   const needsExistingCode = Boolean(

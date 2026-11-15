@@ -753,13 +753,24 @@ export async function createSupervisor(params: {
   name: string;
   email: string;
   canManageTeam: boolean;
+  allowedLineIds?: string[];
   createdByUid: string;
   assignedWorkerIds: string[];
 }): Promise<string> {
-  const { name, email, canManageTeam, createdByUid, assignedWorkerIds } = params;
+  const {
+    name,
+    email,
+    canManageTeam,
+    allowedLineIds = [],
+    createdByUid,
+    assignedWorkerIds,
+  } = params;
   const supId = makeSafeId('sup');
   const cleanName = trimStr(name, FIELD_LIMITS.NAME_MAX);
   const cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
+  const cleanLineIds = Array.from(
+    new Set(allowedLineIds.map((id) => trimStr(id, FIELD_LIMITS.LINE_ID_MAX)).filter(Boolean))
+  ).slice(0, 50);
 
   try {
     const batch = writeBatch(db);
@@ -770,6 +781,7 @@ export async function createSupervisor(params: {
       uid: '',
       active: true,
       canManageTeam,
+      allowedLineIds: cleanLineIds,
       createdByUid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -823,18 +835,44 @@ export async function updateSupervisorConfig(params: {
   }
 }
 
+export async function updateSupervisorAllowedLines(params: {
+  supervisorId: string;
+  allowedLineIds: string[];
+}): Promise<void> {
+  const { supervisorId, allowedLineIds } = params;
+  const cleanLineIds = Array.from(
+    new Set(allowedLineIds.map((id) => trimStr(id, FIELD_LIMITS.LINE_ID_MAX)).filter(Boolean))
+  ).slice(0, 50);
+  try {
+    await updateDoc(doc(db, 'supervisors', supervisorId), {
+      allowedLineIds: cleanLineIds,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `supervisors/${supervisorId}`);
+  }
+}
+
 export async function updateSupervisorDetails(params: {
   supervisor: Supervisor;
   name: string;
   email: string;
   active: boolean;
   canManageTeam: boolean;
+  allowedLineIds?: string[];
 }): Promise<void> {
-  const { supervisor, name, email, active, canManageTeam } = params;
+  const { supervisor, name, email, active, canManageTeam, allowedLineIds } = params;
   const cleanName = trimStr(name, FIELD_LIMITS.NAME_MAX);
   const cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
   const emailChanged = cleanEmail !== supervisor.email.toLowerCase();
   const nameChanged = cleanName !== supervisor.name;
+  const cleanLineIds = Array.from(
+    new Set(
+      (allowedLineIds ?? supervisor.allowedLineIds ?? [])
+        .map((id) => trimStr(id, FIELD_LIMITS.LINE_ID_MAX))
+        .filter(Boolean)
+    )
+  ).slice(0, 50);
 
   try {
     const batch = writeBatch(db);
@@ -844,6 +882,7 @@ export async function updateSupervisorDetails(params: {
       uid: emailChanged ? '' : supervisor.uid,
       active,
       canManageTeam,
+      allowedLineIds: cleanLineIds,
       updatedAt: serverTimestamp(),
     });
     if (emailChanged && supervisor.uid) {

@@ -102,6 +102,7 @@ export interface Supervisor {
   uid: string;
   active: boolean;
   canManageTeam: boolean;
+  allowedLineIds?: string[];
   createdByUid: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;

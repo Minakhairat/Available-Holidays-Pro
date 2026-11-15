@@ -49,22 +49,40 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/supervisor_accounts/$(request.auth.uid)).data.supervisorId;
     }
 
+    function mySupervisorData() {
+      return get(/databases/$(database)/documents/supervisors/$(mySupervisorId())).data;
+    }
+
     function isSupervisor() {
       return hasSupervisorAccount()
         && exists(/databases/$(database)/documents/supervisors/$(mySupervisorId()))
-        && get(/databases/$(database)/documents/supervisors/$(mySupervisorId())).data.active == true;
+        && mySupervisorData().active == true;
     }
 
     function canSupervisorManageTeam() {
       return isSupervisor()
-        && get(/databases/$(database)/documents/supervisors/$(mySupervisorId())).data.canManageTeam == true;
+        && mySupervisorData().canManageTeam == true;
+    }
+
+    function isSupervisorAllowedForLine(lineId) {
+      return isSupervisor()
+        && isValidId(lineId)
+        && (
+          mySupervisorData().canManageTeam == true
+          || ('allowedLineIds' in mySupervisorData() && lineId in mySupervisorData().allowedLineIds)
+        );
     }
 
     function isSupervisorOfWorker(workerId) {
       return isSupervisor()
         && isValidId(workerId)
         && exists(/databases/$(database)/documents/workers/$(workerId))
-        && get(/databases/$(database)/documents/workers/$(workerId)).data.supervisorId == mySupervisorId();
+        && (
+          mySupervisorData().canManageTeam == true
+          || get(/databases/$(database)/documents/workers/$(workerId)).data.supervisorId == mySupervisorId()
+          || ('allowedLineIds' in mySupervisorData()
+              && get(/databases/$(database)/documents/workers/$(workerId)).data.lineId in mySupervisorData().allowedLineIds)
+        );
     }
 
     // ====================
@@ -131,7 +149,7 @@ service cloud.firestore {
           'id', 'name', 'email', 'uid', 'active', 'canManageTeam', 'createdByUid', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'name', 'email', 'uid', 'active', 'canManageTeam', 'createdByUid', 'createdAt', 'updatedAt'
+          'id', 'name', 'email', 'uid', 'active', 'canManageTeam', 'allowedLineIds', 'createdByUid', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id) && data.id.size() <= 64
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
@@ -139,6 +157,11 @@ service cloud.firestore {
         && data.uid is string && data.uid.size() <= 128
         && data.active is bool
         && data.canManageTeam is bool
+        && (!('allowedLineIds' in data) || (
+          data.allowedLineIds is list
+          && data.allowedLineIds.size() <= 50
+          && (data.allowedLineIds.size() == 0 || (data.allowedLineIds[0] is string && data.allowedLineIds[0].size() >= 1 && data.allowedLineIds[0].size() <= 32))
+        ))
         && isValidId(data.createdByUid)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -308,7 +331,7 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/lines/$(incoming().lineId))
         && (
           isMainAdmin()
-          || (isSupervisor() && incoming().supervisorId == mySupervisorId())
+          || (isSupervisor() && incoming().supervisorId == mySupervisorId() && isSupervisorAllowedForLine(incoming().lineId))
           || (incoming().claimedUid == request.auth.uid && incoming().supervisorId == 'main_admin')
         );
       allow update: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
@@ -321,9 +344,11 @@ service cloud.firestore {
           (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
             'employeeCode', 'name', 'lineId', 'supervisorId', 'supervisorName', 'supervisorUid', 'claimedUid', 'active', 'updatedAt'
           ]))
-          || (isSupervisorOfWorker(workerId) && incoming().diff(existing()).affectedKeys().hasOnly([
-            'employeeCode', 'name', 'lineId', 'active', 'supervisorUid', 'updatedAt'
-          ]))
+          || (isSupervisorOfWorker(workerId)
+            && (incoming().lineId == existing().lineId || isSupervisorAllowedForLine(incoming().lineId))
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'employeeCode', 'name', 'lineId', 'active', 'supervisorUid', 'updatedAt'
+            ]))
           || (canSupervisorManageTeam() && existing().supervisorId == 'main_admin'
             && incoming().supervisorId == mySupervisorId()
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -431,7 +456,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'name', 'email', 'uid', 'active', 'canManageTeam', 'updatedAt'
+            'name', 'email', 'uid', 'active', 'canManageTeam', 'allowedLineIds', 'updatedAt'
           ]))
           || (existing().email == verifiedEmail() && existing().uid == ''
             && incoming().uid == request.auth.uid
@@ -497,11 +522,16 @@ service cloud.firestore {
         || existing().requesterUid == request.auth.uid
         || existing().supervisorUid == request.auth.uid
         || isSupervisorOfWorker(existing().workerId)
+        || isSupervisorAllowedForLine(existing().lineId)
       );
       allow list: if isVerified() && (
         isMainAdmin()
         || existing().requesterUid == request.auth.uid
         || existing().supervisorUid == request.auth.uid
+        || (isSupervisor() && (
+          mySupervisorData().canManageTeam == true
+          || ('allowedLineIds' in mySupervisorData() && existing().lineId in mySupervisorData().allowedLineIds)
+        ))
       );
       allow create: if isValidId(requestId) && isVerified() && isValidLeaveRequest(incoming())
         && incoming().id == requestId
@@ -534,7 +564,8 @@ service cloud.firestore {
           || (existing().requesterUid == request.auth.uid && existing().status == 'pending'
             && incoming().status == 'cancelled'
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-          || (isSupervisorOfWorker(existing().workerId) && existing().status == 'pending'
+          || ((isSupervisorOfWorker(existing().workerId) || isSupervisorAllowedForLine(existing().lineId))
+            && existing().status == 'pending'
             && incoming().status in ['approved', 'rejected']
             && incoming().reviewedByUid == request.auth.uid
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -554,6 +585,7 @@ service cloud.firestore {
         || existing().toSupervisorUid == request.auth.uid
         || isSupervisorOfWorker(existing().fromWorkerId)
         || isSupervisorOfWorker(existing().toWorkerId)
+        || isSupervisorAllowedForLine(existing().lineId)
       );
       allow list: if isVerified() && (
         isMainAdmin()
@@ -561,6 +593,10 @@ service cloud.firestore {
         || existing().toUid == request.auth.uid
         || existing().fromSupervisorUid == request.auth.uid
         || existing().toSupervisorUid == request.auth.uid
+        || (isSupervisor() && (
+          mySupervisorData().canManageTeam == true
+          || ('allowedLineIds' in mySupervisorData() && existing().lineId in mySupervisorData().allowedLineIds)
+        ))
       );
       allow create: if isValidId(swapId) && isVerified() && isValidSwapRequest(incoming())
         && incoming().id == swapId
@@ -602,7 +638,9 @@ service cloud.firestore {
             && existing().status == 'pending_peer'
             && incoming().status in ['pending_supervisor', 'rejected_by_peer']
             && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'rejectionReason', 'updatedAt']))
-          || ((isSupervisorOfWorker(existing().fromWorkerId) || isSupervisorOfWorker(existing().toWorkerId))
+          || ((isSupervisorOfWorker(existing().fromWorkerId)
+                || isSupervisorOfWorker(existing().toWorkerId)
+                || isSupervisorAllowedForLine(existing().lineId))
             && existing().status == 'pending_supervisor'
             && incoming().status in ['approved', 'rejected_by_supervisor']
             && incoming().reviewedByUid == request.auth.uid

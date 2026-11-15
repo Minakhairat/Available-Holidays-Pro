@@ -230,7 +230,11 @@
         },
         "canManageTeam": {
           "type": "boolean",
-          "description": "Whether supervisor can add/select workers under their supervision."
+          "description": "Whether supervisor can add/select workers under their supervision and manage all lines."
+        },
+        "allowedLineIds": {
+          "type": "array",
+          "description": "List of production line IDs this supervisor is explicitly allowed to control."
         },
         "createdByUid": {
           "type": "string",

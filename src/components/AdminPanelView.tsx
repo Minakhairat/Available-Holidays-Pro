@@ -44,10 +44,16 @@ import {
   reviewSwapAsSupervisor,
   updateLineQuota,
   updateProductionLine,
+  updateSupervisorAllowedLines,
   updateSupervisorConfig,
   updateSupervisorDetails,
   updateWorkerDetails,
 } from '../services/firestoreService';
+import {
+  canSupervisorControlLine,
+  canSupervisorControlWorker,
+  getSupervisorAllowedLines,
+} from '../lib/permissions';
 import { LineIcon } from './LineIcon';
 import { ExcelWorkerImportCard } from './ExcelWorkerImportCard';
 
@@ -115,6 +121,7 @@ export function AdminPanelView({
   const [supName, setSupName] = useState('');
   const [supEmail, setSupEmail] = useState('');
   const [supCanManage, setSupCanManage] = useState(true);
+  const [supLineIds, setSupLineIds] = useState<string[]>([]);
   const [supWorkerIds, setSupWorkerIds] = useState<string[]>([]);
   const [expandedSupId, setExpandedSupId] = useState<string | null>(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
@@ -125,6 +132,7 @@ export function AdminPanelView({
   const [editSupEmail, setEditSupEmail] = useState('');
   const [editSupCanManage, setEditSupCanManage] = useState(true);
   const [editSupActive, setEditSupActive] = useState(true);
+  const [editSupLineIds, setEditSupLineIds] = useState<string[]>([]);
 
   // New Production Line Form State (Main Admin Only)
   const [newLineName, setNewLineName] = useState('');
@@ -140,11 +148,27 @@ export function AdminPanelView({
 
   const mySupId = supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
 
+  const allowedLines = useMemo(
+    () => getSupervisorAllowedLines(lines, isMainAdmin, supervisorRecord),
+    [lines, isMainAdmin, supervisorRecord]
+  );
+
+  const effectiveDlLineId = useMemo(() => {
+    if (allowedLines.some((l) => l.id === dlLineId)) return dlLineId;
+    return allowedLines[0]?.id || '';
+  }, [allowedLines, dlLineId]);
+
+  const effectiveWLineId = useMemo(() => {
+    if (allowedLines.some((l) => l.id === wLineId)) return wLineId;
+    return allowedLines[0]?.id || '';
+  }, [allowedLines, wLineId]);
+
   // Scope filters
   const scopedWorkers = useMemo(() => {
-    if (isMainAdmin) return workers;
-    return workers.filter((w) => w.supervisorId === mySupId);
-  }, [workers, isMainAdmin, mySupId]);
+    return workers.filter((w) =>
+      canSupervisorControlWorker(w, isMainAdmin, supervisorRecord)
+    );
+  }, [workers, isMainAdmin, supervisorRecord]);
 
   const unassignedWorkers = useMemo(
     () => workers.filter((w) => w.supervisorId === MAIN_ADMIN_SUPERVISOR_ID),
@@ -155,19 +179,35 @@ export function AdminPanelView({
     return leaveRequests.filter((r) => {
       if (r.status !== LeaveRequestStatus.PENDING) return false;
       if (isMainAdmin) return true;
-      return r.supervisorId === mySupId;
+      return (
+        canSupervisorControlLine(r.lineId, isMainAdmin, supervisorRecord) ||
+        r.supervisorId === mySupId
+      );
     });
-  }, [leaveRequests, isMainAdmin, mySupId]);
+  }, [leaveRequests, isMainAdmin, supervisorRecord, mySupId]);
 
   const pendingSwapReqs = useMemo(() => {
     return swapRequests.filter((s) => {
       if (s.status !== SwapRequestStatus.PENDING_SUPERVISOR) return false;
       if (isMainAdmin) return true;
-      return s.fromSupervisorId === mySupId || s.toSupervisorId === mySupId;
+      return (
+        canSupervisorControlLine(s.lineId, isMainAdmin, supervisorRecord) ||
+        s.fromSupervisorId === mySupId ||
+        s.toSupervisorId === mySupId
+      );
     });
-  }, [swapRequests, isMainAdmin, mySupId]);
+  }, [swapRequests, isMainAdmin, supervisorRecord, mySupId]);
 
   const totalPending = pendingLeaveReqs.length + pendingSwapReqs.length;
+
+  const leaveFilterLines = useMemo(() => {
+    if (isMainAdmin) return lines;
+    return lines.filter(
+      (l) =>
+        canSupervisorControlLine(l.id, isMainAdmin, supervisorRecord) ||
+        scopedWorkers.some((w) => w.lineId === l.id)
+    );
+  }, [lines, isMainAdmin, supervisorRecord, scopedWorkers]);
 
   const scopedLeaves = useMemo(() => {
     const q = leaveSearch.trim().toLowerCase();
@@ -175,7 +215,15 @@ export function AdminPanelView({
       .filter((l) => {
         if (!isMainAdmin) {
           const worker = workers.find((w) => w.id === l.workerId);
-          if (worker?.supervisorId !== mySupId) return false;
+          const allowedByLine = canSupervisorControlLine(
+            l.lineId,
+            isMainAdmin,
+            supervisorRecord
+          );
+          const allowedByWorker = worker
+            ? canSupervisorControlWorker(worker, isMainAdmin, supervisorRecord)
+            : false;
+          if (!allowedByLine && !allowedByWorker) return false;
         }
         if (leaveLineFilter !== 'all' && l.lineId !== leaveLineFilter) return false;
         if (
@@ -189,11 +237,11 @@ export function AdminPanelView({
         return true;
       })
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [leaves, isMainAdmin, workers, mySupId, leaveLineFilter, leaveSearch]);
+  }, [leaves, isMainAdmin, workers, supervisorRecord, leaveLineFilter, leaveSearch]);
 
   const directEligibleWorkers = useMemo(
-    () => scopedWorkers.filter((w) => w.active && w.lineId === dlLineId),
-    [scopedWorkers, dlLineId]
+    () => scopedWorkers.filter((w) => w.active && w.lineId === effectiveDlLineId),
+    [scopedWorkers, effectiveDlLineId]
   );
 
   const selectedDirectWorker = useMemo(
@@ -266,7 +314,7 @@ export function AdminPanelView({
   const handleDirectAddLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    const line = lines.find((l) => l.id === dlLineId);
+    const line = allowedLines.find((l) => l.id === effectiveDlLineId);
     const worker = scopedWorkers.find((w) => w.id === dlWorkerId);
     if (!line || !worker || !dlDate) {
       setErrorMsg('يرجى اختيار الخط والتاريخ والعامل.');
@@ -368,12 +416,17 @@ export function AdminPanelView({
         : chosenSup?.uid || ''
       : actorUid;
 
+    if (!effectiveWLineId) {
+      setErrorMsg('لا توجد خطوط إنتاج مسموح لك بإضافة عمال عليها حالياً.');
+      return;
+    }
+
     setBusyId('create_worker');
     try {
       await createWorker({
         employeeCode: trimmedCode,
         name: trimmedName,
-        lineId: wLineId || lines[0]?.id || 'line1',
+        lineId: effectiveWLineId,
         supervisorId,
         supervisorName,
         supervisorUid,
@@ -454,15 +507,46 @@ export function AdminPanelView({
         name: supName.trim(),
         email: supEmail.trim().toLowerCase(),
         canManageTeam: supCanManage,
+        allowedLineIds: supLineIds,
         createdByUid: actorUid,
         assignedWorkerIds: supWorkerIds,
       });
       setSupName('');
       setSupEmail('');
+      setSupLineIds([]);
       setSupWorkerIds([]);
-      onSuccessToast('تمت إضافة المشرف المساعد وتعيين أفراده بنجاح');
+      onSuccessToast('تمت إضافة المشرف المساعد وتحديد صلاحياته بنجاح');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذر إضافة المشرف');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleToggleSupervisorLine = async (
+    sup: Supervisor,
+    line: ProductionLine
+  ) => {
+    setErrorMsg(null);
+    const currentIds = sup.allowedLineIds || [];
+    const hasLine = currentIds.includes(line.id);
+    const nextIds = hasLine
+      ? currentIds.filter((id) => id !== line.id)
+      : [...currentIds, line.id];
+
+    setBusyId(`sup_line_${sup.id}_${line.id}`);
+    try {
+      await updateSupervisorAllowedLines({
+        supervisorId: sup.id,
+        allowedLineIds: nextIds,
+      });
+      onSuccessToast(
+        hasLine
+          ? `تم إلغاء تحكم ${sup.name} في ${line.name}`
+          : `تم السماح لـ ${sup.name} بالتحكم في ${line.name}`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث خطوط المشرف');
     } finally {
       setBusyId(null);
     }
@@ -550,6 +634,7 @@ export function AdminPanelView({
     setEditSupEmail(sup.email);
     setEditSupCanManage(sup.canManageTeam);
     setEditSupActive(sup.active);
+    setEditSupLineIds(sup.allowedLineIds || []);
   };
 
   const handleSaveSupervisorEdit = async (sup: Supervisor) => {
@@ -578,6 +663,7 @@ export function AdminPanelView({
         email: trimmedEmail,
         active: editSupActive,
         canManageTeam: editSupCanManage,
+        allowedLineIds: editSupLineIds,
       });
       setEditingSupId(null);
       onSuccessToast(`تم تحديث بيانات المشرف ${trimmedName}`);
@@ -671,8 +757,7 @@ export function AdminPanelView({
       : []),
   ];
 
-  const displayedWorkers = workers.filter((w) => {
-    if (!isMainAdmin && w.supervisorId !== mySupId) return false;
+  const displayedWorkers = scopedWorkers.filter((w) => {
     const q = workerSearch.trim().toLowerCase();
     if (!q) return true;
     const lineName = lines.find((l) => l.id === w.lineId)?.name || '';
@@ -701,7 +786,11 @@ export function AdminPanelView({
               <p className="text-xs text-neutral-500">
                 {isMainAdmin
                   ? 'صلاحية كاملة على جميع الخطوط، الموافقات، الإجازات، والمشرفين المساعدين'
-                  : `تدير حالياً ${scopedWorkers.length} عامل مسجلين تحت إشرافك`}
+                  : supervisorRecord?.canManageTeam
+                    ? `صلاحية كاملة على جميع الخطوط والأفراد (${scopedWorkers.length} عامل)`
+                    : `تتحكم في ${allowedLines.length} ${
+                        allowedLines.length === 1 ? 'خط إنتاج' : 'خطوط إنتاج'
+                      } · ${scopedWorkers.length} عامل`}
               </p>
             </div>
           </div>
@@ -926,24 +1015,35 @@ export function AdminPanelView({
               يمكنك تسجيل إجازة لأي عامل مسجل يدوياً حتى لو لم يقم بتسجيل الدخول بنفسه.
             </p>
 
+            {!isMainAdmin && allowedLines.length === 0 && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                لم يتم تحديد خطوط إنتاج لك بعد. تواصل مع الأدمن الرئيسي لتحديد الخطوط المسموح لك بها.
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-neutral-700 mb-1.5">
                 الخط / القسم
               </label>
               <select
-                value={dlLineId}
+                value={effectiveDlLineId}
+                disabled={allowedLines.length === 0}
                 onChange={(e) => {
                   setDlLineId(e.target.value);
                   setDlWorkerId('');
                   setDlMissingCode('');
                 }}
-                className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
+                className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F] disabled:bg-neutral-100"
               >
-                {lines.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name} (الحد {l.maxLeaves})
-                  </option>
-                ))}
+                {allowedLines.length === 0 ? (
+                  <option value="">لا توجد خطوط مسموح بها</option>
+                ) : (
+                  allowedLines.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} (الحد {l.maxLeaves})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -1000,7 +1100,7 @@ export function AdminPanelView({
 
             <button
               type="submit"
-              disabled={busyId === 'direct_add'}
+              disabled={busyId === 'direct_add' || allowedLines.length === 0}
               className="w-full min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold cursor-pointer disabled:opacity-50"
             >
               {busyId === 'direct_add' ? 'جاري التسجيل...' : 'حفظ وتسجيل الإجازة'}
@@ -1018,8 +1118,8 @@ export function AdminPanelView({
                   onChange={(e) => setLeaveLineFilter(e.target.value)}
                   className="h-9 px-3 rounded-lg border border-neutral-200 text-xs bg-white"
                 >
-                  <option value="all">كل الخطوط</option>
-                  {lines.map((l) => (
+                  <option value="all">كل الخطوط المتاحة</option>
+                  {leaveFilterLines.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.name}
                     </option>
@@ -1143,20 +1243,31 @@ export function AdminPanelView({
                 />
               </div>
 
+              {!isMainAdmin && allowedLines.length === 0 && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                  لم يتم تعيين خطوط إنتاج لك بعد. اطلب من الأدمن الرئيسي اختيار الخطوط المسموح لك بها.
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
                   الخط / القسم
                 </label>
                 <select
-                  value={wLineId}
+                  value={effectiveWLineId}
+                  disabled={allowedLines.length === 0}
                   onChange={(e) => setWLineId(e.target.value)}
-                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F] disabled:bg-neutral-100"
                 >
-                  {lines.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
+                  {allowedLines.length === 0 ? (
+                    <option value="">لا توجد خطوط مسموح بها</option>
+                  ) : (
+                    allowedLines.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 
@@ -1201,7 +1312,7 @@ export function AdminPanelView({
 
               <button
                 type="submit"
-                disabled={busyId === 'create_worker'}
+                disabled={busyId === 'create_worker' || allowedLines.length === 0}
                 className="w-full min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold cursor-pointer disabled:opacity-50"
               >
                 {busyId === 'create_worker' ? 'جاري الإضافة...' : 'إضافة العامل'}
@@ -1319,11 +1430,17 @@ export function AdminPanelView({
                             }}
                             className="h-9 px-2.5 rounded-lg border border-neutral-200 bg-white text-xs"
                           >
-                            {lines.map((l) => (
-                              <option key={l.id} value={l.id}>
-                                {l.name}
-                              </option>
-                            ))}
+                            {lines
+                              .filter(
+                                (l) =>
+                                  l.id === w.lineId ||
+                                  allowedLines.some((al) => al.id === l.id)
+                              )
+                              .map((l) => (
+                                <option key={l.id} value={l.id}>
+                                  {l.name}
+                                </option>
+                              ))}
                           </select>
 
                           {isMainAdmin && (
@@ -1419,11 +1536,17 @@ export function AdminPanelView({
                               onChange={(e) => setEditWorkerLineId(e.target.value)}
                               className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
                             >
-                              {lines.map((l) => (
-                                <option key={l.id} value={l.id}>
-                                  {l.name}
-                                </option>
-                              ))}
+                              {lines
+                                .filter(
+                                  (l) =>
+                                    l.id === w.lineId ||
+                                    allowedLines.some((al) => al.id === l.id)
+                                )
+                                .map((l) => (
+                                  <option key={l.id} value={l.id}>
+                                    {l.name}
+                                  </option>
+                                ))}
                             </select>
                           </div>
                           <div className="sm:col-span-2 flex items-center gap-2 h-9">
@@ -1510,15 +1633,58 @@ export function AdminPanelView({
                 />
               </div>
 
-              <label className="flex items-center gap-2.5 text-xs font-semibold text-neutral-700 cursor-pointer">
+              <label className="flex items-start gap-2.5 text-xs font-semibold text-neutral-700 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={supCanManage}
                   onChange={(e) => setSupCanManage(e.target.checked)}
-                  className="w-4 h-4 accent-[#D32F2F]"
+                  className="w-4 h-4 accent-[#D32F2F] mt-0.5 shrink-0"
                 />
-                <span>السماح للمشرف بإضافة أو اختيار أفراد غير معينين لفريقه</span>
+                <span>
+                  السماح بضم أفراد غير معينين (يمنحه صلاحية التعامل مع أي فرد من أي خط)
+                </span>
               </label>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  الخطوط المسموح له بالتحكم فيها ({supLineIds.length})
+                </label>
+                {supCanManage && (
+                  <p className="text-[11px] text-emerald-700 mb-1.5">
+                    بما أن صلاحية ضم الأفراد مفعلة، سيتعامل المشرف مع جميع الخطوط والأفراد تلقائياً.
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {lines.map((line, idx) => {
+                    const checked = supLineIds.includes(line.id);
+                    return (
+                      <label
+                        key={line.id}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-red-50 border-[#D32F2F]/50 text-[#B71C1C]'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-700 hover:bg-neutral-100'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setSupLineIds((prev) =>
+                              checked
+                                ? prev.filter((id) => id !== line.id)
+                                : [...prev, line.id]
+                            )
+                          }
+                          className="w-4 h-4 accent-[#D32F2F]"
+                        />
+                        <span className="font-mono-num">{idx + 1}.</span>
+                        <span>{line.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
@@ -1560,7 +1726,7 @@ export function AdminPanelView({
                 disabled={busyId === 'create_sup'}
                 className="w-full min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold cursor-pointer"
               >
-                {busyId === 'create_sup' ? 'جاري الحفظ...' : 'إضافة المشرف وتعيين أفراده'}
+                {busyId === 'create_sup' ? 'جاري الحفظ...' : 'إضافة المشرف وتعيين صلاحياته'}
               </button>
             </form>
 
@@ -1583,6 +1749,7 @@ export function AdminPanelView({
                       const assigned = workers.filter(
                         (w) => w.supervisorId === sup.id
                       );
+                      const supAllowedLineIds = sup.allowedLineIds || [];
                       const isExpanded = expandedSupId === sup.id;
                       const isEditingSup = editingSupId === sup.id;
 
@@ -1606,9 +1773,23 @@ export function AdminPanelView({
                                 {sup.email}
                               </p>
                               <p className="text-xs text-neutral-600 mt-0.5">
-                                يتحكم في{' '}
-                                <strong className="font-mono-num">{assigned.length}</strong>{' '}
-                                أفراد
+                                {sup.canManageTeam ? (
+                                  <span className="font-bold text-emerald-700">
+                                    صلاحية كاملة على جميع الخطوط وجميع الأفراد
+                                  </span>
+                                ) : (
+                                  <>
+                                    يتحكم في{' '}
+                                    <strong className="font-mono-num">
+                                      {supAllowedLineIds.length}
+                                    </strong>{' '}
+                                    خط ·{' '}
+                                    <strong className="font-mono-num">
+                                      {assigned.length}
+                                    </strong>{' '}
+                                    أفراد معينين
+                                  </>
+                                )}
                               </p>
                             </div>
 
@@ -1666,6 +1847,69 @@ export function AdminPanelView({
                             </div>
                           </div>
 
+                          {/* Direct Numbered Line Selection & Full Team Access Toggle */}
+                          <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-extrabold text-neutral-800">
+                                الخطوط المسموح له بالتحكم فيها:
+                              </span>
+                              <label className="flex items-center gap-2 text-xs font-bold text-neutral-700 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={sup.canManageTeam}
+                                  disabled={busyId === `sup_manage_${sup.id}`}
+                                  onChange={async () => {
+                                    setBusyId(`sup_manage_${sup.id}`);
+                                    try {
+                                      await updateSupervisorConfig({
+                                        supervisor: sup,
+                                        active: sup.active,
+                                        canManageTeam: !sup.canManageTeam,
+                                      });
+                                      onSuccessToast(
+                                        !sup.canManageTeam
+                                          ? `تم تفعيل صلاحية كل الخطوط والأفراد لـ ${sup.name}`
+                                          : `تم قصر صلاحية ${sup.name} على الخطوط والأفراد المحددين فقط`
+                                      );
+                                    } finally {
+                                      setBusyId(null);
+                                    }
+                                  }}
+                                  className="w-4 h-4 accent-[#D32F2F]"
+                                />
+                                <span>السماح بضم أفراد غير معينين (كل الخطوط والأفراد)</span>
+                              </label>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {lines.map((line, idx) => {
+                                const checked = supAllowedLineIds.includes(line.id);
+                                const isToggling =
+                                  busyId === `sup_line_${sup.id}_${line.id}`;
+                                return (
+                                  <label
+                                    key={line.id}
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
+                                      checked
+                                        ? 'bg-red-50 border-[#D32F2F]/50 text-[#B71C1C]'
+                                        : 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-100'
+                                    } ${isToggling ? 'opacity-60' : ''}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={isToggling}
+                                      onChange={() => handleToggleSupervisorLine(sup, line)}
+                                      className="w-4 h-4 accent-[#D32F2F]"
+                                    />
+                                    <span className="font-mono-num">{idx + 1}.</span>
+                                    <span>{line.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+
                           {isEditingSup && (
                             <div className="p-3.5 rounded-lg bg-neutral-50 border border-neutral-200 space-y-3">
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1712,8 +1956,45 @@ export function AdminPanelView({
                                     onChange={(e) => setEditSupCanManage(e.target.checked)}
                                     className="w-4 h-4 accent-[#D32F2F]"
                                   />
-                                  <span>السماح بضم أفراد غير معينين</span>
+                                  <span>
+                                    السماح بضم أفراد غير معينين (التعامل مع أي فرد من أي خط)
+                                  </span>
                                 </label>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-neutral-600 mb-1.5">
+                                  الخطوط المسموح بالتحكم فيها ({editSupLineIds.length})
+                                </label>
+                                <div className="flex flex-wrap gap-2">
+                                  {lines.map((line, idx) => {
+                                    const checked = editSupLineIds.includes(line.id);
+                                    return (
+                                      <label
+                                        key={line.id}
+                                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-bold cursor-pointer ${
+                                          checked
+                                            ? 'bg-red-50 border-[#D32F2F]/50 text-[#B71C1C]'
+                                            : 'bg-white border-neutral-300 text-neutral-700'
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() =>
+                                            setEditSupLineIds((prev) =>
+                                              checked
+                                                ? prev.filter((id) => id !== line.id)
+                                                : [...prev, line.id]
+                                            )
+                                          }
+                                          className="w-4 h-4 accent-[#D32F2F]"
+                                        />
+                                        <span className="font-mono-num">{idx + 1}.</span>
+                                        <span>{line.name}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
                               </div>
                               <div className="flex items-center justify-end gap-2">
                                 <button

@@ -8,7 +8,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { LeaveEntry, ProductionLine, Worker } from '../types';
+import { LeaveEntry, ProductionLine, Supervisor, Worker } from '../types';
 import {
   formatDisplayDate,
   getArabicDayName,
@@ -20,6 +20,10 @@ import {
 } from '../lib/dateUtils';
 import { LineIcon } from './LineIcon';
 import { directCancelLeave } from '../services/firestoreService';
+import {
+  canSupervisorControlLine,
+  canSupervisorControlWorker,
+} from '../lib/permissions';
 
 interface MonthlyScheduleViewProps {
   lines: ProductionLine[];
@@ -31,6 +35,7 @@ interface MonthlyScheduleViewProps {
   isMainAdmin: boolean;
   isSupervisor: boolean;
   supervisorId: string;
+  supervisorRecord: Supervisor | null;
   actorUid: string;
   actorName: string;
   onRequestLeave: (line: ProductionLine, date: string) => void;
@@ -50,7 +55,7 @@ export function MonthlyScheduleView({
   currentWorker,
   isMainAdmin,
   isSupervisor,
-  supervisorId,
+  supervisorRecord,
   actorUid,
   actorName,
   onRequestLeave,
@@ -77,11 +82,16 @@ export function MonthlyScheduleView({
     !currentWorker ||
     currentWorker.lineId === activeLine.id;
 
+  const canSupervisorActOnActiveLine = Boolean(
+    activeLine && canSupervisorControlLine(activeLine.id, isMainAdmin, supervisorRecord)
+  );
+
   const canManageLeave = (leave: LeaveEntry) => {
     if (isMainAdmin) return true;
     if (!isSupervisor) return false;
+    if (canSupervisorControlLine(leave.lineId, false, supervisorRecord)) return true;
     const worker = workers.find((w) => w.id === leave.workerId);
-    return worker?.supervisorId === supervisorId;
+    return worker ? canSupervisorControlWorker(worker, false, supervisorRecord) : false;
   };
 
   const monthDays = useMemo(() => {
@@ -359,7 +369,7 @@ export function MonthlyScheduleView({
                                   <CalendarPlus className="w-3.5 h-3.5" />
                                   <span>طلب ({day.remaining})</span>
                                 </button>
-                                {(isMainAdmin || isSupervisor) && (
+                                {canSupervisorActOnActiveLine && (
                                   <button
                                     type="button"
                                     onClick={() => onDirectAddForDate(activeLine, day.iso)}
@@ -480,7 +490,7 @@ export function MonthlyScheduleView({
                   <CalendarPlus className="w-4 h-4" />
                   <span>طلب إجازة ({day.remaining} متاح)</span>
                 </button>
-                {(isMainAdmin || isSupervisor) && (
+                {canSupervisorActOnActiveLine && (
                   <button
                     type="button"
                     onClick={() => onDirectAddForDate(activeLine, day.iso)}

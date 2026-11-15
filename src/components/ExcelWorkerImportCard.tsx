@@ -15,6 +15,11 @@ import {
   ExcelWorkerImportRow,
   importWorkersFromExcelRows,
 } from '../services/firestoreService';
+import {
+  canSupervisorControlLine,
+  canSupervisorControlWorker,
+  getSupervisorAllowedLines,
+} from '../lib/permissions';
 
 interface ExcelWorkerImportCardProps {
   lines: ProductionLine[];
@@ -133,9 +138,15 @@ export function ExcelWorkerImportCard({
   onSuccessToast,
   onError,
 }: ExcelWorkerImportCardProps) {
+  const allowedLines = getSupervisorAllowedLines(
+    lines,
+    isMainAdmin,
+    supervisorRecord
+  );
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [fileName, setFileName] = useState<string>('');
-  const [defaultLineId, setDefaultLineId] = useState<string>(lines[0]?.id || '');
+  const [defaultLineId, setDefaultLineId] = useState<string>(allowedLines[0]?.id || '');
   const [updateExisting, setUpdateExisting] = useState<boolean>(true);
   const [rawSheetRows, setRawSheetRows] = useState<Record<string, unknown>[]>([]);
   const [importing, setImporting] = useState(false);
@@ -146,7 +157,10 @@ export function ExcelWorkerImportCard({
   const parsedRows: ParsedPreviewRow[] = (() => {
     if (rawSheetRows.length === 0) return [];
     const seenCodes = new Set<string>();
-    const activeDefaultLineId = defaultLineId || lines[0]?.id || '';
+    const activeDefaultLineId =
+      allowedLines.some((l) => l.id === defaultLineId)
+        ? defaultLineId
+        : allowedLines[0]?.id || '';
 
     return rawSheetRows.map((raw, index) => {
       const rowNum = index + 2;
@@ -258,12 +272,28 @@ export function ExcelWorkerImportCard({
           supervisorName,
           supervisorUid,
           status: 'error',
-          errorReason: `خط غير معروف (${lineInput})`,
+          errorReason: `خط غير معروف (${lineInput || 'غير محدد'})`,
+        };
+      }
+
+      if (!canSupervisorControlLine(matchedLine.id, isMainAdmin, supervisorRecord)) {
+        return {
+          rowNum,
+          employeeCode,
+          name,
+          lineName: matchedLine.name,
+          lineId: matchedLine.id,
+          email,
+          supervisorId,
+          supervisorName,
+          supervisorUid,
+          status: 'error',
+          errorReason: `الخط "${matchedLine.name}" خارج صلاحياتك`,
         };
       }
 
       if (existingWorker) {
-        if (!isMainAdmin && existingWorker.supervisorId !== mySupId) {
+        if (!canSupervisorControlWorker(existingWorker, isMainAdmin, supervisorRecord)) {
           return {
             rowNum,
             employeeCode,
@@ -276,7 +306,7 @@ export function ExcelWorkerImportCard({
             supervisorUid,
             existingWorkerId: existingWorker.id,
             status: 'error',
-            errorReason: 'هذا الكود مسجل لمشرف آخر',
+            errorReason: 'هذا العامل خارج نطاق صلاحياتك',
           };
         }
         return {
@@ -440,57 +470,67 @@ export function ExcelWorkerImportCard({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div className="md:col-span-5">
-          <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-            اختر ملف Excel
-          </label>
-          <label className="flex items-center justify-between gap-2 h-11 px-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 hover:border-[#D32F2F] cursor-pointer text-xs">
-            <span className="flex items-center gap-2 truncate text-neutral-700 font-semibold">
-              <Upload className="w-4 h-4 text-[#D32F2F] shrink-0" />
-              <span className="truncate">
-                {fileName || 'اضغط لاختيار ملف .xlsx أو .xls أو .csv'}
+      {!isMainAdmin && allowedLines.length === 0 ? (
+        <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+          لم يتم تحديد خطوط إنتاج مسموحة لحسابك بعد. يرجى مراجعة الأدمن الرئيسي لتحديد خطوطك أو تفعيل صلاحية التحكم الكامل.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          <div className="md:col-span-5">
+            <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+              اختر ملف Excel
+            </label>
+            <label className="flex items-center justify-between gap-2 h-11 px-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 hover:border-[#D32F2F] cursor-pointer text-xs">
+              <span className="flex items-center gap-2 truncate text-neutral-700 font-semibold">
+                <Upload className="w-4 h-4 text-[#D32F2F] shrink-0" />
+                <span className="truncate">
+                  {fileName || 'اضغط لاختيار ملف .xlsx أو .xls أو .csv'}
+                </span>
               </span>
-            </span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </label>
-        </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+            </label>
+          </div>
 
-        <div className="md:col-span-4">
-          <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-            الخط الافتراضي (في حال خلو عمود الخط)
-          </label>
-          <select
-            value={defaultLineId || lines[0]?.id || ''}
-            onChange={(e) => setDefaultLineId(e.target.value)}
-            className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
-          >
-            {lines.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="md:col-span-4">
+            <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+              الخط الافتراضي (في حال خلو عمود الخط)
+            </label>
+            <select
+              value={
+                allowedLines.some((l) => l.id === defaultLineId)
+                  ? defaultLineId
+                  : allowedLines[0]?.id || ''
+              }
+              onChange={(e) => setDefaultLineId(e.target.value)}
+              className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+            >
+              {allowedLines.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="md:col-span-3 flex items-center h-11">
-          <label className="flex items-center gap-2 text-xs font-semibold text-neutral-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={updateExisting}
-              onChange={(e) => setUpdateExisting(e.target.checked)}
-              className="w-4 h-4 accent-[#D32F2F]"
-            />
-            <span>تحديث الموجودين بنفس الكود</span>
-          </label>
+          <div className="md:col-span-3 flex items-center h-11">
+            <label className="flex items-center gap-2 text-xs font-semibold text-neutral-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={updateExisting}
+                onChange={(e) => setUpdateExisting(e.target.checked)}
+                className="w-4 h-4 accent-[#D32F2F]"
+              />
+              <span>تحديث الموجودين بنفس الكود</span>
+            </label>
+          </div>
         </div>
-      </div>
+      )}
 
       {parsedRows.length > 0 && (
         <div className="space-y-3 pt-2 border-t border-neutral-200">

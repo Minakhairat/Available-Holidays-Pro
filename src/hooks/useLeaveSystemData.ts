@@ -27,7 +27,7 @@ function sortByCreatedDesc<T extends { createdAt?: { toMillis?: () => number } }
 }
 
 export function useLeaveSystemData() {
-  const { user, profile, isMainAdmin, isSupervisor, authReady } = useAuth();
+  const { user, profile, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
 
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -36,17 +36,22 @@ export function useLeaveSystemData() {
 
   const [myLeaveReqs, setMyLeaveReqs] = useState<LeaveRequest[]>([]);
   const [supLeaveReqs, setSupLeaveReqs] = useState<LeaveRequest[]>([]);
+  const [supLineLeaveReqs, setSupLineLeaveReqs] = useState<Record<string, LeaveRequest[]>>({});
 
   const [fromSwaps, setFromSwaps] = useState<SwapRequest[]>([]);
   const [toSwaps, setToSwaps] = useState<SwapRequest[]>([]);
   const [supFromSwaps, setSupFromSwaps] = useState<SwapRequest[]>([]);
   const [supToSwaps, setSupToSwaps] = useState<SwapRequest[]>([]);
+  const [supLineSwaps, setSupLineSwaps] = useState<Record<string, SwapRequest[]>>({});
 
   const [userNotifs, setUserNotifs] = useState<AppNotification[]>([]);
   const [adminNotifs, setAdminNotifs] = useState<AppNotification[]>([]);
   const [supNotifs, setSupNotifs] = useState<AppNotification[]>([]);
 
   const [loading, setLoading] = useState(true);
+
+  const supCanManageTeam = Boolean(isSupervisor && supervisorRecord?.canManageTeam);
+  const supAllowedLineIdsKey = (supervisorRecord?.allowedLineIds || []).join(',');
 
   useEffect(() => {
     if (!authReady || !user) {
@@ -56,6 +61,9 @@ export function useLeaveSystemData() {
 
     setLoading(true);
     const unsubs: Array<() => void> = [];
+    const allowedLineIds = supAllowedLineIdsKey
+      ? supAllowedLineIdsKey.split(',').filter(Boolean)
+      : [];
 
     // 1. Production Lines
     unsubs.push(
@@ -97,7 +105,8 @@ export function useLeaveSystemData() {
     );
 
     // 4. Leave Requests
-    if (isMainAdmin) {
+    setSupLineLeaveReqs({});
+    if (isMainAdmin || supCanManageTeam) {
       unsubs.push(
         onSnapshot(
           collection(db, 'leave_requests'),
@@ -124,13 +133,29 @@ export function useLeaveSystemData() {
             (err) => handleFirestoreError(err, OperationType.LIST, 'leave_requests')
           )
         );
+        for (let i = 0; i < allowedLineIds.length; i += 10) {
+          const chunk = allowedLineIds.slice(i, i + 10);
+          const chunkKey = `chunk_${i}`;
+          unsubs.push(
+            onSnapshot(
+              query(collection(db, 'leave_requests'), where('lineId', 'in', chunk)),
+              (snap) =>
+                setSupLineLeaveReqs((prev) => ({
+                  ...prev,
+                  [chunkKey]: snap.docs.map((d) => d.data() as LeaveRequest),
+                })),
+              (err) => handleFirestoreError(err, OperationType.LIST, 'leave_requests')
+            )
+          );
+        }
       } else {
         setSupLeaveReqs([]);
       }
     }
 
     // 5. Swap Requests
-    if (isMainAdmin) {
+    setSupLineSwaps({});
+    if (isMainAdmin || supCanManageTeam) {
       unsubs.push(
         onSnapshot(
           collection(db, 'swap_requests'),
@@ -173,6 +198,21 @@ export function useLeaveSystemData() {
             (err) => handleFirestoreError(err, OperationType.LIST, 'swap_requests')
           )
         );
+        for (let i = 0; i < allowedLineIds.length; i += 10) {
+          const chunk = allowedLineIds.slice(i, i + 10);
+          const chunkKey = `chunk_${i}`;
+          unsubs.push(
+            onSnapshot(
+              query(collection(db, 'swap_requests'), where('lineId', 'in', chunk)),
+              (snap) =>
+                setSupLineSwaps((prev) => ({
+                  ...prev,
+                  [chunkKey]: snap.docs.map((d) => d.data() as SwapRequest),
+                })),
+              (err) => handleFirestoreError(err, OperationType.LIST, 'swap_requests')
+            )
+          );
+        }
       } else {
         setSupFromSwaps([]);
         setSupToSwaps([]);
@@ -236,21 +276,27 @@ export function useLeaveSystemData() {
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [authReady, user, isMainAdmin, isSupervisor]);
+  }, [authReady, user, isMainAdmin, isSupervisor, supCanManageTeam, supAllowedLineIdsKey]);
 
   const leaveRequests = useMemo(() => {
     const map = new Map<string, LeaveRequest>();
-    [...myLeaveReqs, ...supLeaveReqs].forEach((r) => map.set(r.id, r));
+    [...myLeaveReqs, ...supLeaveReqs, ...Object.values(supLineLeaveReqs).flat()].forEach((r) =>
+      map.set(r.id, r)
+    );
     return sortByCreatedDesc(Array.from(map.values()));
-  }, [myLeaveReqs, supLeaveReqs]);
+  }, [myLeaveReqs, supLeaveReqs, supLineLeaveReqs]);
 
   const swapRequests = useMemo(() => {
     const map = new Map<string, SwapRequest>();
-    [...fromSwaps, ...toSwaps, ...supFromSwaps, ...supToSwaps].forEach((s) =>
-      map.set(s.id, s)
-    );
+    [
+      ...fromSwaps,
+      ...toSwaps,
+      ...supFromSwaps,
+      ...supToSwaps,
+      ...Object.values(supLineSwaps).flat(),
+    ].forEach((s) => map.set(s.id, s));
     return sortByCreatedDesc(Array.from(map.values()));
-  }, [fromSwaps, toSwaps, supFromSwaps, supToSwaps]);
+  }, [fromSwaps, toSwaps, supFromSwaps, supToSwaps, supLineSwaps]);
 
   const notifications = useMemo(() => {
     const map = new Map<string, AppNotification>();

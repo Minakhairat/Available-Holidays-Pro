@@ -21,6 +21,7 @@ import {
   SwapRequestStatus,
 } from './types';
 import { MAIN_ADMIN_SUPERVISOR_ID } from './lib/seedData';
+import { canSupervisorControlLine } from './lib/permissions';
 
 function MainAppShell() {
   const { user, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
@@ -78,14 +79,23 @@ function MainAppShell() {
     if (!isMainAdmin && !isSupervisor) return 0;
     const pendingLeaves = leaveRequests.filter((r) => {
       if (r.status !== LeaveRequestStatus.PENDING) return false;
-      return isMainAdmin || r.supervisorId === mySupId;
+      return (
+        isMainAdmin ||
+        canSupervisorControlLine(r.lineId, false, supervisorRecord) ||
+        r.supervisorId === mySupId
+      );
     }).length;
     const pendingSwaps = swapRequests.filter((s) => {
       if (s.status !== SwapRequestStatus.PENDING_SUPERVISOR) return false;
-      return isMainAdmin || s.fromSupervisorId === mySupId || s.toSupervisorId === mySupId;
+      return (
+        isMainAdmin ||
+        canSupervisorControlLine(s.lineId, false, supervisorRecord) ||
+        s.fromSupervisorId === mySupId ||
+        s.toSupervisorId === mySupId
+      );
     }).length;
     return pendingLeaves + pendingSwaps;
-  }, [isMainAdmin, isSupervisor, leaveRequests, swapRequests, mySupId]);
+  }, [isMainAdmin, isSupervisor, supervisorRecord, leaveRequests, swapRequests, mySupId]);
 
   if (!authReady) {
     return (
@@ -182,6 +192,7 @@ function MainAppShell() {
             isMainAdmin={isMainAdmin}
             isSupervisor={isSupervisor}
             supervisorId={mySupId}
+            supervisorRecord={supervisorRecord}
             actorUid={user.uid}
             actorName={actorName}
             onRequestLeave={(line, date) =>
@@ -278,6 +289,7 @@ function MainAppShell() {
         leaves={leaves}
         isMainAdmin={isMainAdmin}
         supervisorId={mySupId}
+        supervisorRecord={supervisorRecord}
         actorUid={user.uid}
         actorName={actorName}
         onSuccessToast={showToast}
