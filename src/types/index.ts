@@ -42,6 +42,7 @@ export const FIELD_LIMITS = {
   ID_MAX: 128,
   LINE_ID_MAX: 32,
   WORKER_ID_MAX: 64,
+  CODE_MAX: 32,
   NAME_MAX: 100,
   LINE_NAME_MAX: 80,
   EMAIL_MAX: 160,
@@ -64,6 +65,7 @@ export interface ProductionLine {
 
 export interface Worker {
   id: string;
+  employeeCode: string;
   name: string;
   lineId: string;
   supervisorId: string;
@@ -111,6 +113,7 @@ export interface LeaveEntry {
   lineName: string;
   date: string; // YYYY-MM-DD
   workerId: string;
+  workerCode?: string;
   workerName: string;
   workerUid: string;
   supervisorId: string;
@@ -127,6 +130,7 @@ export interface LeaveRequest {
   lineName: string;
   date: string; // YYYY-MM-DD
   workerId: string;
+  workerCode?: string;
   workerName: string;
   requesterUid: string;
   supervisorId: string;
@@ -146,6 +150,7 @@ export interface SwapRequest {
   lineId: string;
   lineName: string;
   fromWorkerId: string;
+  fromWorkerCode?: string;
   fromWorkerName: string;
   fromUid: string;
   fromSupervisorId: string;
@@ -153,6 +158,7 @@ export interface SwapRequest {
   fromLeaveId: string;
   fromDate: string;
   toWorkerId: string;
+  toWorkerCode?: string;
   toWorkerName: string;
   toUid: string;
   toSupervisorId: string;

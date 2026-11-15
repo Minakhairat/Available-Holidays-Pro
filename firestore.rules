@@ -88,10 +88,11 @@ service cloud.firestore {
           'supervisorUid', 'claimedUid', 'active', 'isTeamDirectory', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'name', 'lineId', 'supervisorId', 'supervisorName',
+          'id', 'employeeCode', 'name', 'lineId', 'supervisorId', 'supervisorName',
           'supervisorUid', 'claimedUid', 'active', 'isTeamDirectory', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id) && data.id.size() <= 64
+        && (!('employeeCode' in data) || (data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 32))
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
         && isValidId(data.lineId) && data.lineId.size() <= 32
         && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
@@ -158,7 +159,7 @@ service cloud.firestore {
           'supervisorId', 'approvedByUid', 'source', 'isPublicSchedule', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'workerUid',
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerCode', 'workerName', 'workerUid',
           'supervisorId', 'approvedByUid', 'source', 'isPublicSchedule', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
@@ -166,6 +167,7 @@ service cloud.firestore {
         && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
         && isValidDateStr(data.date)
         && isValidId(data.workerId) && data.workerId.size() <= 64
+        && (!('workerCode' in data) || (data.workerCode is string && data.workerCode.size() >= 1 && data.workerCode.size() <= 32))
         && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 100
         && data.workerUid is string && data.workerUid.size() <= 128
         && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
@@ -183,7 +185,7 @@ service cloud.firestore {
           'rejectionReason', 'reviewedByUid', 'reviewedByName', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'requesterUid',
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerCode', 'workerName', 'requesterUid',
           'supervisorId', 'supervisorName', 'supervisorUid', 'reason', 'status',
           'rejectionReason', 'reviewedByUid', 'reviewedByName', 'createdAt', 'updatedAt'
         ])
@@ -192,6 +194,7 @@ service cloud.firestore {
         && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
         && isValidDateStr(data.date)
         && isValidId(data.workerId) && data.workerId.size() <= 64
+        && (!('workerCode' in data) || (data.workerCode is string && data.workerCode.size() >= 1 && data.workerCode.size() <= 32))
         && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 100
         && isValidId(data.requesterUid)
         && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
@@ -215,9 +218,9 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'lineId', 'lineName', 'fromWorkerId', 'fromWorkerName', 'fromUid',
+          'id', 'lineId', 'lineName', 'fromWorkerId', 'fromWorkerCode', 'fromWorkerName', 'fromUid',
           'fromSupervisorId', 'fromSupervisorUid', 'fromLeaveId', 'fromDate',
-          'toWorkerId', 'toWorkerName', 'toUid', 'toSupervisorId', 'toSupervisorUid',
+          'toWorkerId', 'toWorkerCode', 'toWorkerName', 'toUid', 'toSupervisorId', 'toSupervisorUid',
           'toLeaveId', 'toDate', 'note', 'status', 'rejectionReason', 'reviewedByUid',
           'createdAt', 'updatedAt'
         ])
@@ -225,6 +228,7 @@ service cloud.firestore {
         && isValidId(data.lineId) && data.lineId.size() <= 32
         && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
         && isValidId(data.fromWorkerId) && data.fromWorkerId.size() <= 64
+        && (!('fromWorkerCode' in data) || (data.fromWorkerCode is string && data.fromWorkerCode.size() <= 32))
         && data.fromWorkerName is string && data.fromWorkerName.size() >= 1 && data.fromWorkerName.size() <= 100
         && isValidId(data.fromUid)
         && isValidId(data.fromSupervisorId) && data.fromSupervisorId.size() <= 64
@@ -232,6 +236,7 @@ service cloud.firestore {
         && data.fromLeaveId is string && data.fromLeaveId.size() <= 128
         && data.fromDate is string && (data.fromDate == '' || isValidDateStr(data.fromDate))
         && isValidId(data.toWorkerId) && data.toWorkerId.size() <= 64
+        && (!('toWorkerCode' in data) || (data.toWorkerCode is string && data.toWorkerCode.size() <= 32))
         && data.toWorkerName is string && data.toWorkerName.size() >= 1 && data.toWorkerName.size() <= 100
         && data.toUid is string && data.toUid.size() <= 128
         && isValidId(data.toSupervisorId) && data.toSupervisorId.size() <= 64
@@ -297,35 +302,48 @@ service cloud.firestore {
       allow list: if isMainAdmin() || (isVerified() && existing().isTeamDirectory == true);
       allow create: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
         && incoming().id == workerId
+        && ('employeeCode' in incoming()) && incoming().employeeCode.size() >= 1
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && existsAfter(/databases/$(database)/documents/lines/$(incoming().lineId))
         && (
           isMainAdmin()
-          || (canSupervisorManageTeam() && incoming().supervisorId == mySupervisorId())
+          || (isSupervisor() && incoming().supervisorId == mySupervisorId())
           || (incoming().claimedUid == request.auth.uid && incoming().supervisorId == 'main_admin')
         );
       allow update: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
         && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
+        && (!('employeeCode' in existing()) || existing().employeeCode == ''
+            || ('employeeCode' in incoming() && incoming().employeeCode.size() >= 1))
         && (
           (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'name', 'lineId', 'supervisorId', 'supervisorName', 'supervisorUid', 'claimedUid', 'active', 'updatedAt'
+            'employeeCode', 'name', 'lineId', 'supervisorId', 'supervisorName', 'supervisorUid', 'claimedUid', 'active', 'updatedAt'
           ]))
           || (isSupervisorOfWorker(workerId) && incoming().diff(existing()).affectedKeys().hasOnly([
-            'name', 'lineId', 'active', 'supervisorUid', 'updatedAt'
+            'employeeCode', 'name', 'lineId', 'active', 'supervisorUid', 'updatedAt'
           ]))
           || (canSupervisorManageTeam() && existing().supervisorId == 'main_admin'
             && incoming().supervisorId == mySupervisorId()
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'supervisorId', 'supervisorName', 'supervisorUid', 'updatedAt'
             ]))
+          || (existing().claimedUid == request.auth.uid
+            && (!('employeeCode' in existing()) || existing().employeeCode == '')
+            && ('employeeCode' in incoming()) && incoming().employeeCode.size() >= 1
+            && incoming().diff(existing()).affectedKeys().hasOnly(['employeeCode', 'updatedAt']))
           || (existing().claimedUid == '' && incoming().claimedUid == request.auth.uid
             && (!exists(/databases/$(database)/documents/worker_pii/$(workerId))
                 || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == ''
                 || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == verifiedEmail())
-            && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'updatedAt']))
+            && (
+              (('employeeCode' in existing()) && existing().employeeCode != ''
+                && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'updatedAt']))
+              || ((!('employeeCode' in existing()) || existing().employeeCode == '')
+                && ('employeeCode' in incoming()) && incoming().employeeCode.size() >= 1
+                && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'employeeCode', 'updatedAt']))
+            ))
         );
       allow delete: if isValidId(workerId) && isMainAdmin();
     }
@@ -348,7 +366,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           isMainAdmin()
-          || (canSupervisorManageTeam() && incoming().supervisorId == mySupervisorId())
+          || (isSupervisor() && incoming().supervisorId == mySupervisorId())
         );
       allow update: if isValidId(workerId) && isVerified() && isValidWorkerPii(incoming())
         && incoming().workerId == existing().workerId
@@ -444,6 +462,7 @@ service cloud.firestore {
       allow list: if isMainAdmin() || (isVerified() && existing().isPublicSchedule == true);
       allow create: if isValidId(leaveId) && isVerified() && isValidLeaveEntry(incoming())
         && incoming().id == leaveId
+        && ('workerCode' in incoming()) && incoming().workerCode.size() >= 1
         && incoming().approvedByUid == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
@@ -458,12 +477,12 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'workerId', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
+            'workerId', 'workerCode', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
           ]))
           || ((isSupervisorOfWorker(existing().workerId) || isSupervisorOfWorker(incoming().workerId))
             && incoming().approvedByUid == request.auth.uid
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'workerId', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
+              'workerId', 'workerCode', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
             ]))
         );
       allow delete: if isValidId(leaveId) && isVerified() && (
@@ -486,6 +505,7 @@ service cloud.firestore {
       );
       allow create: if isValidId(requestId) && isVerified() && isValidLeaveRequest(incoming())
         && incoming().id == requestId
+        && ('workerCode' in incoming()) && incoming().workerCode.size() >= 1
         && incoming().requesterUid == request.auth.uid
         && incoming().status == 'pending'
         && incoming().rejectionReason == ''

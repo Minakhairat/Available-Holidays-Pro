@@ -52,6 +52,12 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Unique worker identifier."
         },
+        "employeeCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Mandatory factory employee code."
+        },
         "name": {
           "type": "string",
           "maxLength": 100,
@@ -105,6 +111,7 @@
       },
       "required": [
         "id",
+        "employeeCode",
         "name",
         "lineId",
         "supervisorId",
@@ -307,6 +314,11 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Worker ID."
         },
+        "workerCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Factory employee code."
+        },
         "workerName": {
           "type": "string",
           "maxLength": 100,
@@ -397,6 +409,11 @@
           "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Worker ID."
+        },
+        "workerCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Factory employee code."
         },
         "workerName": {
           "type": "string",
@@ -508,6 +525,11 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Requesting worker ID."
         },
+        "fromWorkerCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Requesting worker employee code."
+        },
         "fromWorkerName": {
           "type": "string",
           "maxLength": 100,
@@ -544,6 +566,11 @@
           "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Target worker ID."
+        },
+        "toWorkerCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Target worker employee code."
         },
         "toWorkerName": {
           "type": "string",

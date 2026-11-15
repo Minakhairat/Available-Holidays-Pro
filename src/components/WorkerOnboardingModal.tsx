@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { UserCheck, UserPlus, X } from 'lucide-react';
-import { ProductionLine, Worker } from '../types';
+import { FIELD_LIMITS, ProductionLine, Worker } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { claimExistingWorker, registerSelfAsWorker } from '../services/firestoreService';
 
@@ -20,6 +20,8 @@ export function WorkerOnboardingModal({
   const { user, refreshAuthContext } = useAuth();
   const [mode, setMode] = useState<'claim' | 'create'>('claim');
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
+  const [claimCode, setClaimCode] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
   const [name, setName] = useState(user?.displayName || '');
   const [lineId, setLineId] = useState(lines[0]?.id || 'line1');
   const [submitting, setSubmitting] = useState(false);
@@ -28,16 +30,42 @@ export function WorkerOnboardingModal({
   if (!open || !user) return null;
 
   const unclaimedWorkers = workers.filter((w) => w.active && !w.claimedUid);
+  const selectedWorker =
+    unclaimedWorkers.find((w) => w.id === selectedWorkerId) || null;
+  const needsClaimCode = Boolean(
+    selectedWorker && !selectedWorker.employeeCode?.trim()
+  );
 
   const handleClaim = async () => {
-    if (!selectedWorkerId) {
+    if (!selectedWorker) {
       setError('يرجى اختيار اسمك من القائمة أولاً.');
       return;
     }
+    const cleanClaimCode = claimCode.trim();
+    if (needsClaimCode && !cleanClaimCode) {
+      setError('كود العامل إجباري لإتمام ربط الحساب.');
+      return;
+    }
+    if (
+      needsClaimCode &&
+      workers.some(
+        (w) =>
+          w.id !== selectedWorker.id &&
+          w.employeeCode?.trim().toLowerCase() === cleanClaimCode.toLowerCase()
+      )
+    ) {
+      setError('كود العامل هذا مستخدم بالفعل لعامل آخر.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await claimExistingWorker({ workerId: selectedWorkerId, uid: user.uid });
+      await claimExistingWorker({
+        workerId: selectedWorker.id,
+        uid: user.uid,
+        ...(needsClaimCode ? { employeeCode: cleanClaimCode } : {}),
+      });
       await refreshAuthContext();
       onClose();
     } catch (err) {
@@ -49,14 +77,31 @@ export function WorkerOnboardingModal({
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
-      setError('يرجى كتابة الاسم الثلاثي.');
+    const cleanCode = employeeCode.trim();
+    if (!cleanCode) {
+      setError('كود العامل إجباري ولا يمكن التسجيل بدونه.');
       return;
     }
+    if (!name.trim()) {
+      setError('يرجى كتابة الاسم الكامل.');
+      return;
+    }
+    if (
+      workers.some(
+        (w) => w.employeeCode?.trim().toLowerCase() === cleanCode.toLowerCase()
+      )
+    ) {
+      setError(
+        `كود العامل "${cleanCode}" مسجل مسبقاً. اختر «اسمي مسجل مسبقاً» إذا كان اسمك موجوداً بالقائمة.`
+      );
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
       await registerSelfAsWorker({
+        employeeCode: cleanCode,
         name: name.trim(),
         lineId: lineId || lines[0]?.id || 'line1',
         uid: user.uid,
@@ -86,13 +131,16 @@ export function WorkerOnboardingModal({
 
         <div className="p-5 space-y-4">
           <p className="text-sm text-neutral-600 leading-relaxed">
-            لإرسال طلبات الإجازة أو تبديل الإجازات مع زملائك، قم بربط حسابك باسمك في خط الإنتاج.
+            لإرسال طلبات الإجازة أو تبديل الإجازات مع زملائك، قم بربط حسابك باسمك وكود العامل في خط الإنتاج.
           </p>
 
           <div className="grid grid-cols-2 gap-2 p-1 bg-neutral-100 rounded-lg">
             <button
               type="button"
-              onClick={() => setMode('claim')}
+              onClick={() => {
+                setMode('claim');
+                setError(null);
+              }}
               className={`py-2 px-3 rounded-md text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                 mode === 'claim'
                   ? 'bg-white text-[#D32F2F] shadow-xs'
@@ -104,7 +152,10 @@ export function WorkerOnboardingModal({
             </button>
             <button
               type="button"
-              onClick={() => setMode('create')}
+              onClick={() => {
+                setMode('create');
+                setError(null);
+              }}
               className={`py-2 px-3 rounded-md text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                 mode === 'create'
                   ? 'bg-white text-[#D32F2F] shadow-xs'
@@ -135,7 +186,11 @@ export function WorkerOnboardingModal({
                   </label>
                   <select
                     value={selectedWorkerId}
-                    onChange={(e) => setSelectedWorkerId(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedWorkerId(e.target.value);
+                      setClaimCode('');
+                      setError(null);
+                    }}
                     className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
                   >
                     <option value="">-- اختر اسمك --</option>
@@ -143,11 +198,28 @@ export function WorkerOnboardingModal({
                       const lineName = lines.find((l) => l.id === w.lineId)?.name || w.lineId;
                       return (
                         <option key={w.id} value={w.id}>
-                          {w.name} ({lineName})
+                          {w.name} {w.employeeCode ? `(كود: ${w.employeeCode}) ` : ''}— {lineName}
                         </option>
                       );
                     })}
                   </select>
+                </div>
+              )}
+
+              {needsClaimCode && (
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    كود العامل <span className="text-[#D32F2F]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={claimCode}
+                    onChange={(e) => setClaimCode(e.target.value)}
+                    maxLength={FIELD_LIMITS.CODE_MAX}
+                    placeholder="أدخل كود العامل الخاص بك..."
+                    className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm font-mono-num focus:outline-none focus:border-[#D32F2F]"
+                  />
                 </div>
               )}
 
@@ -164,10 +236,26 @@ export function WorkerOnboardingModal({
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                  الاسم الكامل
+                  كود العامل <span className="text-[#D32F2F]">*</span>
                 </label>
                 <input
                   type="text"
+                  required
+                  value={employeeCode}
+                  onChange={(e) => setEmployeeCode(e.target.value)}
+                  maxLength={FIELD_LIMITS.CODE_MAX}
+                  placeholder="مثال: 1025"
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm font-mono-num focus:outline-none focus:border-[#D32F2F]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  الاسم الكامل <span className="text-[#D32F2F]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   maxLength={100}

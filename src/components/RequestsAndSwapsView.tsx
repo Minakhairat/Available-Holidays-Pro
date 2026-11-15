@@ -269,6 +269,7 @@ export function RequestsAndSwapsView({
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-extrabold text-neutral-900">
                             من: {s.fromWorkerName}
+                            {s.fromWorkerCode ? ` (${s.fromWorkerCode})` : ''}
                           </span>
                           <span className={`text-xs font-bold ${st.tone}`}>{st.text}</span>
                         </div>
@@ -354,6 +355,7 @@ export function RequestsAndSwapsView({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-extrabold text-neutral-900">
                             إلى: {s.toWorkerName}
+                            {s.toWorkerCode ? ` (${s.toWorkerCode})` : ''}
                           </span>
                           <span className="text-neutral-300">·</span>
                           <span className={`text-xs font-bold ${st.tone}`}>{st.text}</span>

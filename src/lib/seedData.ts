@@ -35,15 +35,15 @@ export const INITIAL_LINES: SeedLineConfig[] = [
 ];
 
 // Employees extracted directly from the existing Google Sheets files
-export const INITIAL_WORKERS: Array<{ id: string; name: string; lineId: string }> = [
-  { id: 'w_line1_mohamed_abdelfattah', name: 'محمد عبد الفتاح', lineId: 'line1' },
-  { id: 'w_line2_mina_shawky', name: 'مينا شوقي', lineId: 'line2' },
-  { id: 'w_line2_islam', name: 'اسلام', lineId: 'line2' },
-  { id: 'w_microwave_ahmed_abdelwahab', name: 'احمد عبد الوهاب', lineId: 'microwave' },
-  { id: 'w_microwave_fady_fathy', name: 'فادي فتحي', lineId: 'microwave' },
-  { id: 'w_microwave_ahmed_ibrahim', name: 'احمد محمد ابراهيم', lineId: 'microwave' },
-  { id: 'w_benatat_hassan_abdelsamad', name: 'حسن محمد عبد الصمد', lineId: 'benatat' },
-  { id: 'w_printing_reda_noshy', name: 'رضا نصحي', lineId: 'printing' },
+export const INITIAL_WORKERS: Array<{ id: string; employeeCode: string; name: string; lineId: string }> = [
+  { id: 'w_line1_mohamed_abdelfattah', employeeCode: '1001', name: 'محمد عبد الفتاح', lineId: 'line1' },
+  { id: 'w_line2_mina_shawky', employeeCode: '1002', name: 'مينا شوقي', lineId: 'line2' },
+  { id: 'w_line2_islam', employeeCode: '1003', name: 'اسلام', lineId: 'line2' },
+  { id: 'w_microwave_ahmed_abdelwahab', employeeCode: '1004', name: 'احمد عبد الوهاب', lineId: 'microwave' },
+  { id: 'w_microwave_fady_fathy', employeeCode: '1005', name: 'فادي فتحي', lineId: 'microwave' },
+  { id: 'w_microwave_ahmed_ibrahim', employeeCode: '1006', name: 'احمد محمد ابراهيم', lineId: 'microwave' },
+  { id: 'w_benatat_hassan_abdelsamad', employeeCode: '1007', name: 'حسن محمد عبد الصمد', lineId: 'benatat' },
+  { id: 'w_printing_reda_noshy', employeeCode: '1008', name: 'رضا نصحي', lineId: 'printing' },
 ];
 
 // Historical/recorded leaves extracted directly from the existing Google Sheets files
@@ -53,6 +53,7 @@ export const INITIAL_LEAVES: Array<{
   lineName: string;
   date: string;
   workerId: string;
+  workerCode: string;
   workerName: string;
 }> = [
   {
@@ -61,6 +62,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط 1',
     date: '2026-10-12',
     workerId: 'w_line1_mohamed_abdelfattah',
+    workerCode: '1001',
     workerName: 'محمد عبد الفتاح',
   },
   {
@@ -69,6 +71,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط 2',
     date: '2026-10-01',
     workerId: 'w_line2_mina_shawky',
+    workerCode: '1002',
     workerName: 'مينا شوقي',
   },
   {
@@ -77,6 +80,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط 2',
     date: '2026-10-12',
     workerId: 'w_line2_islam',
+    workerCode: '1003',
     workerName: 'اسلام',
   },
   {
@@ -85,6 +89,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط الميكروويف',
     date: '2026-01-29',
     workerId: 'w_microwave_ahmed_ibrahim',
+    workerCode: '1006',
     workerName: 'احمد محمد ابراهيم',
   },
   {
@@ -93,6 +98,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط الميكروويف',
     date: '2026-02-10',
     workerId: 'w_microwave_ahmed_abdelwahab',
+    workerCode: '1004',
     workerName: 'احمد عبد الوهاب',
   },
   {
@@ -101,6 +107,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط الميكروويف',
     date: '2026-02-11',
     workerId: 'w_microwave_ahmed_abdelwahab',
+    workerCode: '1004',
     workerName: 'احمد عبد الوهاب',
   },
   {
@@ -109,6 +116,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط الميكروويف',
     date: '2026-02-14',
     workerId: 'w_microwave_fady_fathy',
+    workerCode: '1005',
     workerName: 'فادي فتحي',
   },
   {
@@ -117,6 +125,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'خط البناطات',
     date: '2026-04-07',
     workerId: 'w_benatat_hassan_abdelsamad',
+    workerCode: '1007',
     workerName: 'حسن محمد عبد الصمد',
   },
   {
@@ -125,6 +134,7 @@ export const INITIAL_LEAVES: Array<{
     lineName: 'قسم الطباعة',
     date: '2026-10-12',
     workerId: 'w_printing_reda_noshy',
+    workerCode: '1008',
     workerName: 'رضا نصحي',
   },
 ];
@@ -158,6 +168,7 @@ export async function seedInitialDatabaseIfNeeded(adminUid: string): Promise<boo
     for (const worker of INITIAL_WORKERS) {
       workersBatch.set(doc(db, 'workers', worker.id), {
         id: worker.id,
+        employeeCode: worker.employeeCode,
         name: worker.name,
         lineId: worker.lineId,
         supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
@@ -183,6 +194,7 @@ export async function seedInitialDatabaseIfNeeded(adminUid: string): Promise<boo
           lineName: leave.lineName,
           date: leave.date,
           workerId: leave.workerId,
+          workerCode: leave.workerCode,
           workerName: leave.workerName,
           workerUid: '',
           supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
@@ -237,11 +249,15 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
       getDocs(query(collection(db, 'leaves'), where('isPublicSchedule', '==', true))),
     ]);
 
-    const workerByNameAndLine = new Map<string, { id: string; supervisorId: string; claimedUid: string }>();
+    const workerByNameAndLine = new Map<
+      string,
+      { id: string; employeeCode: string; supervisorId: string; claimedUid: string }
+    >();
     existingWorkersSnap.forEach((docSnap) => {
       const data = docSnap.data();
       workerByNameAndLine.set(`${data.lineId}::${String(data.name).trim()}`, {
         id: docSnap.id,
+        employeeCode: String(data.employeeCode || `EMP-${docSnap.id.slice(-4).toUpperCase()}`),
         supervisorId: data.supervisorId || MAIN_ADMIN_SUPERVISOR_ID,
         claimedUid: data.claimedUid || '',
       });
@@ -253,13 +269,14 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
       existingLeaveKeys.add(`${data.lineId}::${data.date}::${String(data.workerName).trim()}`);
     });
 
-    const workersToCreate: Array<{ id: string; name: string; lineId: string }> = [];
+    const workersToCreate: Array<{ id: string; employeeCode: string; name: string; lineId: string }> = [];
     const leavesToCreate: Array<{
       id: string;
       lineId: string;
       lineName: string;
       date: string;
       workerId: string;
+      workerCode: string;
       workerName: string;
       workerUid: string;
       supervisorId: string;
@@ -292,14 +309,17 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
           let workerInfo = workerByNameAndLine.get(workerKey);
           if (!workerInfo) {
             const newWorkerId = makeWorkerSlug(line.id, workerName);
+            const fallbackCode = `SH-${newWorkerId.slice(-5).toUpperCase()}`;
             workerInfo = {
               id: newWorkerId,
+              employeeCode: fallbackCode,
               supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
               claimedUid: '',
             };
             workerByNameAndLine.set(workerKey, workerInfo);
             workersToCreate.push({
               id: newWorkerId,
+              employeeCode: fallbackCode,
               name: workerName.slice(0, 100),
               lineId: line.id,
             });
@@ -315,6 +335,7 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
               lineName: line.name,
               date: dateISO,
               workerId: workerInfo.id,
+              workerCode: workerInfo.employeeCode,
               workerName: workerName.slice(0, 100),
               workerUid: workerInfo.claimedUid,
               supervisorId: workerInfo.supervisorId,
@@ -330,6 +351,7 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
       for (const w of chunk) {
         batch.set(doc(db, 'workers', w.id), {
           id: w.id,
+          employeeCode: w.employeeCode,
           name: w.name,
           lineId: w.lineId,
           supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
@@ -355,6 +377,7 @@ export async function importFromLegacyGoogleSheets(adminUid: string): Promise<{
           lineName: l.lineName,
           date: l.date,
           workerId: l.workerId,
+          workerCode: l.workerCode,
           workerName: l.workerName,
           workerUid: l.workerUid,
           supervisorId: l.supervisorId,

@@ -108,8 +108,10 @@ export function DashboardView({
       if (filter !== 'all' && item.status !== filter) return false;
       if (q) {
         const matchLine = item.line.name.toLowerCase().includes(q);
-        const matchWorker = item.tomorrowLeaves.some((l) =>
-          l.workerName.toLowerCase().includes(q)
+        const matchWorker = item.tomorrowLeaves.some(
+          (l) =>
+            l.workerName.toLowerCase().includes(q) ||
+            (l.workerCode || '').toLowerCase().includes(q)
         );
         return matchLine || matchWorker;
       }
@@ -369,6 +371,11 @@ export function DashboardView({
                             >
                               <span className="text-xs font-bold text-neutral-800 truncate">
                                 {leave.workerName}
+                                {leave.workerCode ? (
+                                  <span className="font-mono-num text-[11px] font-semibold text-neutral-500 mr-1">
+                                    ({leave.workerCode})
+                                  </span>
+                                ) : null}
                                 {isMe ? ' (أنت)' : ''}
                               </span>
                               {!isMe && canActOnLine && (

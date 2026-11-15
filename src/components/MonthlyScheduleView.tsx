@@ -309,6 +309,11 @@ export function MonthlyScheduleView({
                           <div className="flex items-center justify-between gap-2 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1.5">
                             <span className="text-xs font-bold text-neutral-800 truncate">
                               {leave.workerName}
+                              {leave.workerCode ? (
+                                <span className="font-mono-num text-[11px] font-semibold text-neutral-500 mr-1">
+                                  ({leave.workerCode})
+                                </span>
+                              ) : null}
                               {isMe ? ' (أنت)' : ''}
                             </span>
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -430,6 +435,11 @@ export function MonthlyScheduleView({
                     >
                       <span className="text-xs font-bold text-neutral-800">
                         {leave.workerName}
+                        {leave.workerCode ? (
+                          <span className="font-mono-num text-[11px] font-semibold text-neutral-500 mr-1">
+                            ({leave.workerCode})
+                          </span>
+                        ) : null}
                         {isMe ? ' (أنت)' : ''}
                       </span>
                       <div className="flex items-center gap-2">

@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { AlertCircle, CalendarPlus, CheckCircle2, X } from 'lucide-react';
-import { LeaveEntry, LeaveRequest, LeaveRequestStatus, ProductionLine, Worker } from '../types';
+import {
+  FIELD_LIMITS,
+  LeaveEntry,
+  LeaveRequest,
+  LeaveRequestStatus,
+  ProductionLine,
+  Worker,
+} from '../types';
 import {
   formatArabicLongDate,
   formatDisplayDate,
@@ -39,6 +46,7 @@ export function LeaveRequestModal({
   onSuccessToast,
 }: LeaveRequestModalProps) {
   const [reason, setReason] = useState('');
+  const [overrideCode, setOverrideCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +100,11 @@ export function LeaveRequestModal({
       setError('لديك طلب إجازة قيد المراجعة بالفعل لهذا اليوم.');
       return;
     }
+    const effectiveCode = worker.employeeCode?.trim() || overrideCode.trim();
+    if (!effectiveCode) {
+      setError('كود العامل إجباري لإرسال طلب الإجازة.');
+      return;
+    }
 
     setSubmitting(true);
     setError(null);
@@ -102,8 +115,10 @@ export function LeaveRequestModal({
         worker,
         requesterUid,
         reason,
+        ...(!worker.employeeCode?.trim() ? { overrideEmployeeCode: effectiveCode } : {}),
       });
       setReason('');
+      setOverrideCode('');
       onSuccessToast(
         `تم إرسال طلب الإجازة إلى ${worker.supervisorName} بنجاح`
       );
@@ -160,7 +175,14 @@ export function LeaveRequestModal({
               <>
                 <div className="flex justify-between gap-2 pt-1.5 border-t border-neutral-200">
                   <span className="text-neutral-500">مقدم الطلب:</span>
-                  <span className="font-bold text-neutral-900">{worker.name}</span>
+                  <span className="font-bold text-neutral-900">
+                    {worker.name}
+                    {worker.employeeCode ? (
+                      <span className="text-xs font-mono-num text-neutral-500 mr-1.5">
+                        (كود: {worker.employeeCode})
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
                 <div className="flex justify-between gap-2">
                   <span className="text-neutral-500">المشرف المختص:</span>
@@ -169,6 +191,23 @@ export function LeaveRequestModal({
               </>
             )}
           </div>
+
+          {worker && !worker.employeeCode?.trim() && (
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                كود العامل <span className="text-[#D32F2F]">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={overrideCode}
+                onChange={(e) => setOverrideCode(e.target.value)}
+                maxLength={FIELD_LIMITS.CODE_MAX}
+                placeholder="أدخل كود العامل الخاص بك..."
+                className="w-full h-10 px-3 rounded-lg border border-neutral-300 text-sm font-mono-num focus:outline-none focus:border-[#D32F2F]"
+              />
+            </div>
+          )}
 
           {!worker && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">

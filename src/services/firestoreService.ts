@@ -42,19 +42,31 @@ export async function submitLeaveRequest(params: {
   worker: Worker;
   requesterUid: string;
   reason: string;
+  overrideEmployeeCode?: string;
 }): Promise<string> {
-  const { line, date, worker, requesterUid, reason } = params;
+  const { line, date, worker, requesterUid, reason, overrideEmployeeCode } = params;
+  const cleanCode = trimStr(overrideEmployeeCode || worker.employeeCode, FIELD_LIMITS.CODE_MAX);
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري لإرسال طلب الإجازة.');
+  }
   const reqId = makeSafeId('req');
   const notifId = makeSafeId('notif');
 
   try {
     const batch = writeBatch(db);
+    if (!worker.employeeCode && overrideEmployeeCode) {
+      batch.update(doc(db, 'workers', worker.id), {
+        employeeCode: cleanCode,
+        updatedAt: serverTimestamp(),
+      });
+    }
     batch.set(doc(db, 'leave_requests', reqId), {
       id: reqId,
       lineId: line.id,
       lineName: trimStr(line.name, FIELD_LIMITS.LINE_NAME_MAX),
       date,
       workerId: worker.id,
+      workerCode: cleanCode,
       workerName: trimStr(worker.name, FIELD_LIMITS.NAME_MAX),
       requesterUid,
       supervisorId: worker.supervisorId,
@@ -131,12 +143,14 @@ export async function reviewLeaveRequest(params: {
     });
 
     if (decision === 'approved') {
+      const code = trimStr(request.workerCode || request.workerId, FIELD_LIMITS.CODE_MAX);
       batch.set(doc(db, 'leaves', leaveId), {
         id: leaveId,
         lineId: request.lineId,
         lineName: trimStr(request.lineName, FIELD_LIMITS.LINE_NAME_MAX),
         date: request.date,
         workerId: request.workerId,
+        workerCode: code,
         workerName: trimStr(request.workerName, FIELD_LIMITS.NAME_MAX),
         workerUid: request.requesterUid,
         supervisorId: request.supervisorId,
@@ -197,6 +211,7 @@ export async function submitSwapRequest(params: {
       lineId: line.id,
       lineName: trimStr(line.name, FIELD_LIMITS.LINE_NAME_MAX),
       fromWorkerId: fromWorker.id,
+      fromWorkerCode: trimStr(fromWorker.employeeCode || '', FIELD_LIMITS.CODE_MAX),
       fromWorkerName: trimStr(fromWorker.name, FIELD_LIMITS.NAME_MAX),
       fromUid,
       fromSupervisorId: fromWorker.supervisorId,
@@ -204,6 +219,7 @@ export async function submitSwapRequest(params: {
       fromLeaveId: fromLeave ? fromLeave.id : '',
       fromDate: fromLeave ? fromLeave.date : '',
       toWorkerId: toWorker.id,
+      toWorkerCode: trimStr(toWorker.employeeCode || '', FIELD_LIMITS.CODE_MAX),
       toWorkerName: trimStr(toWorker.name, FIELD_LIMITS.NAME_MAX),
       toUid: toWorker.claimedUid,
       toSupervisorId: toWorker.supervisorId,
@@ -347,6 +363,7 @@ export async function reviewSwapAsSupervisor(params: {
     if (approve) {
       batch.update(doc(db, 'leaves', swap.toLeaveId), {
         workerId: swap.fromWorkerId,
+        ...(swap.fromWorkerCode ? { workerCode: trimStr(swap.fromWorkerCode, FIELD_LIMITS.CODE_MAX) } : {}),
         workerName: swap.fromWorkerName,
         workerUid: swap.fromUid,
         supervisorId: swap.fromSupervisorId,
@@ -358,6 +375,7 @@ export async function reviewSwapAsSupervisor(params: {
       if (swap.fromLeaveId) {
         batch.update(doc(db, 'leaves', swap.fromLeaveId), {
           workerId: swap.toWorkerId,
+          ...(swap.toWorkerCode ? { workerCode: trimStr(swap.toWorkerCode, FIELD_LIMITS.CODE_MAX) } : {}),
           workerName: swap.toWorkerName,
           workerUid: swap.toUid,
           supervisorId: swap.toSupervisorId,
@@ -431,19 +449,31 @@ export async function directAddLeave(params: {
   worker: Worker;
   actorUid: string;
   actorName: string;
+  overrideEmployeeCode?: string;
 }): Promise<string> {
-  const { line, date, worker, actorUid, actorName } = params;
+  const { line, date, worker, actorUid, actorName, overrideEmployeeCode } = params;
+  const cleanCode = trimStr(overrideEmployeeCode || worker.employeeCode, FIELD_LIMITS.CODE_MAX);
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري لتسجيل الإجازة.');
+  }
   const leaveId = makeSafeId('leave');
   const notifId = makeSafeId('notif');
 
   try {
     const batch = writeBatch(db);
+    if (!worker.employeeCode && overrideEmployeeCode) {
+      batch.update(doc(db, 'workers', worker.id), {
+        employeeCode: cleanCode,
+        updatedAt: serverTimestamp(),
+      });
+    }
     batch.set(doc(db, 'leaves', leaveId), {
       id: leaveId,
       lineId: line.id,
       lineName: trimStr(line.name, FIELD_LIMITS.LINE_NAME_MAX),
       date,
       workerId: worker.id,
+      workerCode: cleanCode,
       workerName: trimStr(worker.name, FIELD_LIMITS.NAME_MAX),
       workerUid: worker.claimedUid || '',
       supervisorId: worker.supervisorId,
@@ -514,6 +544,7 @@ export async function directCancelLeave(params: {
 }
 
 export async function createWorker(params: {
+  employeeCode: string;
   name: string;
   lineId: string;
   supervisorId: string;
@@ -521,7 +552,11 @@ export async function createWorker(params: {
   supervisorUid: string;
   email?: string;
 }): Promise<string> {
-  const { name, lineId, supervisorId, supervisorName, supervisorUid, email = '' } = params;
+  const { employeeCode, name, lineId, supervisorId, supervisorName, supervisorUid, email = '' } = params;
+  const cleanCode = trimStr(employeeCode, FIELD_LIMITS.CODE_MAX);
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري لإضافة عامل جديد.');
+  }
   const workerId = makeSafeId('w');
   const cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
 
@@ -529,6 +564,7 @@ export async function createWorker(params: {
     const batch = writeBatch(db);
     batch.set(doc(db, 'workers', workerId), {
       id: workerId,
+      employeeCode: cleanCode,
       name: trimStr(name, FIELD_LIMITS.NAME_MAX),
       lineId,
       supervisorId,
@@ -558,15 +594,124 @@ export async function createWorker(params: {
   }
 }
 
+export interface ExcelWorkerImportRow {
+  employeeCode: string;
+  name: string;
+  lineId: string;
+  email?: string;
+  supervisorId: string;
+  supervisorName: string;
+  supervisorUid: string;
+  existingWorkerId?: string;
+}
+
+export async function importWorkersFromExcelRows(params: {
+  rows: ExcelWorkerImportRow[];
+  updateExisting: boolean;
+}): Promise<{ created: number; updated: number; skipped: number }> {
+  const { rows, updateExisting } = params;
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  const operations: Array<{
+    type: 'create' | 'update';
+    workerId: string;
+    row: ExcelWorkerImportRow;
+  }> = [];
+
+  for (const row of rows) {
+    const cleanCode = trimStr(row.employeeCode, FIELD_LIMITS.CODE_MAX);
+    const cleanName = trimStr(row.name, FIELD_LIMITS.NAME_MAX);
+    if (!cleanCode || !cleanName || !row.lineId) {
+      skipped += 1;
+      continue;
+    }
+    if (row.existingWorkerId) {
+      if (updateExisting) {
+        operations.push({
+          type: 'update',
+          workerId: row.existingWorkerId,
+          row: { ...row, employeeCode: cleanCode, name: cleanName },
+        });
+      } else {
+        skipped += 1;
+      }
+    } else {
+      operations.push({
+        type: 'create',
+        workerId: makeSafeId('w'),
+        row: { ...row, employeeCode: cleanCode, name: cleanName },
+      });
+    }
+  }
+
+  try {
+    // Process in chunks of 4 workers (up to 8 writes if worker_pii included)
+    for (let i = 0; i < operations.length; i += 4) {
+      const chunk = operations.slice(i, i + 4);
+      const batch = writeBatch(db);
+      for (const op of chunk) {
+        const cleanEmail = trimStr(op.row.email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
+        if (op.type === 'create') {
+          batch.set(doc(db, 'workers', op.workerId), {
+            id: op.workerId,
+            employeeCode: op.row.employeeCode,
+            name: op.row.name,
+            lineId: op.row.lineId,
+            supervisorId: op.row.supervisorId,
+            supervisorName: trimStr(op.row.supervisorName, FIELD_LIMITS.NAME_MAX),
+            supervisorUid: op.row.supervisorUid || '',
+            claimedUid: '',
+            active: true,
+            isTeamDirectory: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          if (cleanEmail) {
+            batch.set(doc(db, 'worker_pii', op.workerId), {
+              workerId: op.workerId,
+              email: cleanEmail,
+              claimedUid: '',
+              supervisorId: op.row.supervisorId,
+              updatedAt: serverTimestamp(),
+            });
+          }
+          created += 1;
+        } else {
+          batch.update(doc(db, 'workers', op.workerId), {
+            employeeCode: op.row.employeeCode,
+            name: op.row.name,
+            lineId: op.row.lineId,
+            updatedAt: serverTimestamp(),
+          });
+          updated += 1;
+        }
+      }
+      await batch.commit();
+    }
+
+    return { created, updated, skipped };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'workers/excel_import');
+  }
+}
+
 export async function updateWorkerDetails(params: {
   workerId: string;
+  employeeCode: string;
   name: string;
   lineId: string;
   active: boolean;
 }): Promise<void> {
-  const { workerId, name, lineId, active } = params;
+  const { workerId, employeeCode, name, lineId, active } = params;
+  const cleanCode = trimStr(employeeCode, FIELD_LIMITS.CODE_MAX);
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري ولا يمكن تركه فارغاً.');
+  }
   try {
     await updateDoc(doc(db, 'workers', workerId), {
+      employeeCode: cleanCode,
       name: trimStr(name, FIELD_LIMITS.NAME_MAX),
       lineId,
       active,
@@ -630,7 +775,7 @@ export async function createSupervisor(params: {
       updatedAt: serverTimestamp(),
     });
 
-    for (const workerId of assignedWorkerIds) {
+    for (const workerId of assignedWorkerIds.slice(0, 7)) {
       batch.update(doc(db, 'workers', workerId), {
         supervisorId: supId,
         supervisorName: cleanName,
@@ -638,8 +783,23 @@ export async function createSupervisor(params: {
         updatedAt: serverTimestamp(),
       });
     }
-
     await batch.commit();
+
+    // Handle any remaining assigned workers sequentially in chunks of 8
+    for (let i = 7; i < assignedWorkerIds.length; i += 8) {
+      const chunk = assignedWorkerIds.slice(i, i + 8);
+      const nextBatch = writeBatch(db);
+      for (const workerId of chunk) {
+        nextBatch.update(doc(db, 'workers', workerId), {
+          supervisorId: supId,
+          supervisorName: cleanName,
+          supervisorUid: '',
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await nextBatch.commit();
+    }
+
     return supId;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `supervisors/${supId}`);
@@ -663,11 +823,67 @@ export async function updateSupervisorConfig(params: {
   }
 }
 
+export async function updateSupervisorDetails(params: {
+  supervisor: Supervisor;
+  name: string;
+  email: string;
+  active: boolean;
+  canManageTeam: boolean;
+}): Promise<void> {
+  const { supervisor, name, email, active, canManageTeam } = params;
+  const cleanName = trimStr(name, FIELD_LIMITS.NAME_MAX);
+  const cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
+  const emailChanged = cleanEmail !== supervisor.email.toLowerCase();
+  const nameChanged = cleanName !== supervisor.name;
+
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'supervisors', supervisor.id), {
+      name: cleanName,
+      email: cleanEmail,
+      uid: emailChanged ? '' : supervisor.uid,
+      active,
+      canManageTeam,
+      updatedAt: serverTimestamp(),
+    });
+    if (emailChanged && supervisor.uid) {
+      batch.delete(doc(db, 'supervisor_accounts', supervisor.uid));
+    }
+    await batch.commit();
+
+    if (nameChanged || emailChanged) {
+      const workersSnap = await getDocs(
+        query(
+          collection(db, 'workers'),
+          where('isTeamDirectory', '==', true),
+          where('supervisorId', '==', supervisor.id)
+        )
+      );
+      const docs = workersSnap.docs;
+      for (let i = 0; i < docs.length; i += 8) {
+        const chunk = docs.slice(i, i + 8);
+        const wBatch = writeBatch(db);
+        for (const wDoc of chunk) {
+          wBatch.update(wDoc.ref, {
+            supervisorName: cleanName,
+            ...(emailChanged ? { supervisorUid: '' } : {}),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await wBatch.commit();
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `supervisors/${supervisor.id}`);
+  }
+}
+
 export async function deleteSupervisorAndReassign(params: {
   supervisorId: string;
+  supervisorUid?: string;
   mainAdminUid: string;
 }): Promise<void> {
-  const { supervisorId, mainAdminUid } = params;
+  const { supervisorId, supervisorUid, mainAdminUid } = params;
   try {
     const workersSnap = await getDocs(
       query(
@@ -676,16 +892,26 @@ export async function deleteSupervisorAndReassign(params: {
         where('supervisorId', '==', supervisorId)
       )
     );
+    const docs = workersSnap.docs;
+    for (let i = 0; i < docs.length; i += 8) {
+      const chunk = docs.slice(i, i + 8);
+      const wBatch = writeBatch(db);
+      for (const wDoc of chunk) {
+        wBatch.update(wDoc.ref, {
+          supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
+          supervisorName: MAIN_ADMIN_SUPERVISOR_NAME,
+          supervisorUid: mainAdminUid,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await wBatch.commit();
+    }
+
     const batch = writeBatch(db);
-    workersSnap.forEach((wDoc) => {
-      batch.update(wDoc.ref, {
-        supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
-        supervisorName: MAIN_ADMIN_SUPERVISOR_NAME,
-        supervisorUid: mainAdminUid,
-        updatedAt: serverTimestamp(),
-      });
-    });
     batch.delete(doc(db, 'supervisors', supervisorId));
+    if (supervisorUid) {
+      batch.delete(doc(db, 'supervisor_accounts', supervisorUid));
+    }
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `supervisors/${supervisorId}`);
@@ -695,12 +921,15 @@ export async function deleteSupervisorAndReassign(params: {
 export async function claimExistingWorker(params: {
   workerId: string;
   uid: string;
+  employeeCode?: string;
 }): Promise<void> {
-  const { workerId, uid } = params;
+  const { workerId, uid, employeeCode } = params;
+  const cleanCode = employeeCode ? trimStr(employeeCode, FIELD_LIMITS.CODE_MAX) : '';
   try {
     const batch = writeBatch(db);
     batch.update(doc(db, 'workers', workerId), {
       claimedUid: uid,
+      ...(cleanCode ? { employeeCode: cleanCode } : {}),
       updatedAt: serverTimestamp(),
     });
     batch.update(doc(db, 'user_profiles', uid), {
@@ -714,16 +943,22 @@ export async function claimExistingWorker(params: {
 }
 
 export async function registerSelfAsWorker(params: {
+  employeeCode: string;
   name: string;
   lineId: string;
   uid: string;
 }): Promise<string> {
-  const { name, lineId, uid } = params;
+  const { employeeCode, name, lineId, uid } = params;
+  const cleanCode = trimStr(employeeCode, FIELD_LIMITS.CODE_MAX);
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري لإتمام التسجيل.');
+  }
   const workerId = makeSafeId('w');
   try {
     const batch = writeBatch(db);
     batch.set(doc(db, 'workers', workerId), {
       id: workerId,
+      employeeCode: cleanCode,
       name: trimStr(name, FIELD_LIMITS.NAME_MAX),
       lineId,
       supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
@@ -774,6 +1009,31 @@ export async function updateLineQuota(lineId: string, maxLeaves: number): Promis
   try {
     await updateDoc(doc(db, 'lines', lineId), {
       maxLeaves: Math.max(1, Math.min(20, Math.floor(maxLeaves))),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `lines/${lineId}`);
+  }
+}
+
+export async function updateProductionLine(params: {
+  lineId: string;
+  name: string;
+  maxLeaves: number;
+  icon: string;
+  order: number;
+}): Promise<void> {
+  const { lineId, name, maxLeaves, icon, order } = params;
+  const cleanName = trimStr(name, FIELD_LIMITS.LINE_NAME_MAX);
+  if (!cleanName) {
+    throw new Error('اسم خط الإنتاج مطلوب.');
+  }
+  try {
+    await updateDoc(doc(db, 'lines', lineId), {
+      name: cleanName,
+      maxLeaves: Math.max(1, Math.min(20, Math.floor(maxLeaves))),
+      order: Math.max(0, Math.min(100, Math.floor(order))),
+      icon: trimStr(icon || 'factory', 40),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {

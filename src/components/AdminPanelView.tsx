@@ -4,6 +4,7 @@ import {
   CalendarPlus,
   Check,
   Download,
+  Pencil,
   Plus,
   Search,
   Shield,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  FIELD_LIMITS,
   LeaveEntry,
   LeaveRequest,
   LeaveRequestStatus,
@@ -41,10 +43,13 @@ import {
   reviewLeaveRequest,
   reviewSwapAsSupervisor,
   updateLineQuota,
+  updateProductionLine,
   updateSupervisorConfig,
+  updateSupervisorDetails,
   updateWorkerDetails,
 } from '../services/firestoreService';
 import { LineIcon } from './LineIcon';
+import { ExcelWorkerImportCard } from './ExcelWorkerImportCard';
 
 interface AdminPanelViewProps {
   lines: ProductionLine[];
@@ -85,10 +90,12 @@ export function AdminPanelView({
   const [dlLineId, setDlLineId] = useState(lines[0]?.id || 'line1');
   const [dlDate, setDlDate] = useState(getTomorrowISO());
   const [dlWorkerId, setDlWorkerId] = useState('');
+  const [dlMissingCode, setDlMissingCode] = useState('');
   const [leaveSearch, setLeaveSearch] = useState('');
   const [leaveLineFilter, setLeaveLineFilter] = useState('all');
 
   // Worker Form State
+  const [wCode, setWCode] = useState('');
   const [wName, setWName] = useState('');
   const [wLineId, setWLineId] = useState(lines[0]?.id || 'line1');
   const [wEmail, setWEmail] = useState('');
@@ -96,6 +103,13 @@ export function AdminPanelView({
     isMainAdmin ? MAIN_ADMIN_SUPERVISOR_ID : supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID
   );
   const [workerSearch, setWorkerSearch] = useState('');
+
+  // Inline Worker Edit State
+  const [editingWorkerId, setEditingWorkerId] = useState<string | null>(null);
+  const [editWorkerCode, setEditWorkerCode] = useState('');
+  const [editWorkerName, setEditWorkerName] = useState('');
+  const [editWorkerLineId, setEditWorkerLineId] = useState('');
+  const [editWorkerActive, setEditWorkerActive] = useState(true);
 
   // Sub-Admin Form State
   const [supName, setSupName] = useState('');
@@ -105,10 +119,24 @@ export function AdminPanelView({
   const [expandedSupId, setExpandedSupId] = useState<string | null>(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
 
+  // Inline Supervisor Edit State (Main Admin Only)
+  const [editingSupId, setEditingSupId] = useState<string | null>(null);
+  const [editSupName, setEditSupName] = useState('');
+  const [editSupEmail, setEditSupEmail] = useState('');
+  const [editSupCanManage, setEditSupCanManage] = useState(true);
+  const [editSupActive, setEditSupActive] = useState(true);
+
   // New Production Line Form State (Main Admin Only)
   const [newLineName, setNewLineName] = useState('');
   const [newLineMax, setNewLineMax] = useState(2);
   const [newLineIcon, setNewLineIcon] = useState('factory');
+
+  // Inline Production Line Edit State (Main Admin Only)
+  const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [editLineName, setEditLineName] = useState('');
+  const [editLineMax, setEditLineMax] = useState(2);
+  const [editLineIcon, setEditLineIcon] = useState('factory');
+  const [editLineOrder, setEditLineOrder] = useState(1);
 
   const mySupId = supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
 
@@ -150,7 +178,12 @@ export function AdminPanelView({
           if (worker?.supervisorId !== mySupId) return false;
         }
         if (leaveLineFilter !== 'all' && l.lineId !== leaveLineFilter) return false;
-        if (q && !l.workerName.toLowerCase().includes(q) && !l.date.includes(q)) {
+        if (
+          q &&
+          !l.workerName.toLowerCase().includes(q) &&
+          !(l.workerCode || '').toLowerCase().includes(q) &&
+          !l.date.includes(q)
+        ) {
           return false;
         }
         return true;
@@ -161,6 +194,11 @@ export function AdminPanelView({
   const directEligibleWorkers = useMemo(
     () => scopedWorkers.filter((w) => w.active && w.lineId === dlLineId),
     [scopedWorkers, dlLineId]
+  );
+
+  const selectedDirectWorker = useMemo(
+    () => directEligibleWorkers.find((w) => w.id === dlWorkerId) || null,
+    [directEligibleWorkers, dlWorkerId]
   );
 
   const handleReviewLeave = async (
@@ -234,6 +272,23 @@ export function AdminPanelView({
       setErrorMsg('يرجى اختيار الخط والتاريخ والعامل.');
       return;
     }
+    const effectiveCode = (worker.employeeCode || dlMissingCode).trim();
+    if (!effectiveCode) {
+      setErrorMsg('كود العامل إجباري لتسجيل الإجازة.');
+      return;
+    }
+    if (
+      !worker.employeeCode &&
+      workers.some(
+        (w) =>
+          w.id !== worker.id &&
+          (w.employeeCode || '').trim().toLowerCase() === effectiveCode.toLowerCase()
+      )
+    ) {
+      setErrorMsg('هذا الكود مسجل لعامل آخر بالفعل.');
+      return;
+    }
+
     const dayLeaves = leaves.filter((l) => l.lineId === line.id && l.date === dlDate);
     if (dayLeaves.length >= line.maxLeaves) {
       setErrorMsg(
@@ -254,8 +309,10 @@ export function AdminPanelView({
         worker,
         actorUid,
         actorName,
+        overrideEmployeeCode: !worker.employeeCode ? effectiveCode : undefined,
       });
       setDlWorkerId('');
+      setDlMissingCode('');
       onSuccessToast(`تم تسجيل إجازة ${worker.name} بتاريخ ${formatDisplayDate(dlDate)}`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذر تسجيل الإجازة');
@@ -277,8 +334,22 @@ export function AdminPanelView({
   const handleCreateWorker = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    if (!wName.trim()) {
+    const trimmedCode = wCode.trim();
+    const trimmedName = wName.trim();
+    if (!trimmedCode) {
+      setErrorMsg('يرجى إدخال كود العامل (حقل إجباري).');
+      return;
+    }
+    if (!trimmedName) {
       setErrorMsg('يرجى إدخال اسم العامل.');
+      return;
+    }
+    if (
+      workers.some(
+        (w) => (w.employeeCode || '').trim().toLowerCase() === trimmedCode.toLowerCase()
+      )
+    ) {
+      setErrorMsg('يوجد عامل مسجل بنفس هذا الكود بالفعل.');
       return;
     }
 
@@ -300,18 +371,70 @@ export function AdminPanelView({
     setBusyId('create_worker');
     try {
       await createWorker({
-        name: wName.trim(),
+        employeeCode: trimmedCode,
+        name: trimmedName,
         lineId: wLineId || lines[0]?.id || 'line1',
         supervisorId,
         supervisorName,
         supervisorUid,
         email: wEmail.trim(),
       });
+      setWCode('');
       setWName('');
       setWEmail('');
       onSuccessToast('تمت إضافة العامل بنجاح');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذر إضافة العامل');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startEditWorker = (w: Worker) => {
+    setErrorMsg(null);
+    setEditingWorkerId(w.id);
+    setEditWorkerCode(w.employeeCode || '');
+    setEditWorkerName(w.name);
+    setEditWorkerLineId(w.lineId);
+    setEditWorkerActive(w.active);
+  };
+
+  const handleSaveWorkerEdit = async (worker: Worker) => {
+    setErrorMsg(null);
+    const trimmedCode = editWorkerCode.trim();
+    const trimmedName = editWorkerName.trim();
+    if (!trimmedCode) {
+      setErrorMsg('كود العامل إجباري ولا يمكن تركه فارغاً.');
+      return;
+    }
+    if (!trimmedName) {
+      setErrorMsg('اسم العامل إجباري.');
+      return;
+    }
+    if (
+      workers.some(
+        (other) =>
+          other.id !== worker.id &&
+          (other.employeeCode || '').trim().toLowerCase() === trimmedCode.toLowerCase()
+      )
+    ) {
+      setErrorMsg('يوجد عامل آخر مسجل بنفس هذا الكود.');
+      return;
+    }
+
+    setBusyId(`edit_worker_${worker.id}`);
+    try {
+      await updateWorkerDetails({
+        workerId: worker.id,
+        employeeCode: trimmedCode,
+        name: trimmedName,
+        lineId: editWorkerLineId || worker.lineId,
+        active: editWorkerActive,
+      });
+      setEditingWorkerId(null);
+      onSuccessToast(`تم تحديث بيانات ${trimmedName}`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث بيانات العامل');
     } finally {
       setBusyId(null);
     }
@@ -420,6 +543,96 @@ export function AdminPanelView({
     }
   };
 
+  const startEditSupervisor = (sup: Supervisor) => {
+    setErrorMsg(null);
+    setEditingSupId(sup.id);
+    setEditSupName(sup.name);
+    setEditSupEmail(sup.email);
+    setEditSupCanManage(sup.canManageTeam);
+    setEditSupActive(sup.active);
+  };
+
+  const handleSaveSupervisorEdit = async (sup: Supervisor) => {
+    setErrorMsg(null);
+    const trimmedName = editSupName.trim();
+    const trimmedEmail = editSupEmail.trim().toLowerCase();
+    if (!trimmedName || !trimmedEmail) {
+      setErrorMsg('اسم المشرف وبريده الإلكتروني إجباريان.');
+      return;
+    }
+    if (
+      supervisors.some(
+        (other) =>
+          other.id !== sup.id && other.email.trim().toLowerCase() === trimmedEmail
+      )
+    ) {
+      setErrorMsg('يوجد مشرف آخر مسجل بنفس هذا البريد الإلكتروني.');
+      return;
+    }
+
+    setBusyId(`edit_sup_${sup.id}`);
+    try {
+      await updateSupervisorDetails({
+        supervisor: sup,
+        name: trimmedName,
+        email: trimmedEmail,
+        active: editSupActive,
+        canManageTeam: editSupCanManage,
+      });
+      setEditingSupId(null);
+      onSuccessToast(`تم تحديث بيانات المشرف ${trimmedName}`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث بيانات المشرف');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const startEditLine = (line: ProductionLine) => {
+    setErrorMsg(null);
+    setEditingLineId(line.id);
+    setEditLineName(line.name);
+    setEditLineMax(line.maxLeaves);
+    setEditLineIcon(line.icon || 'factory');
+    setEditLineOrder(line.order ?? 1);
+  };
+
+  const handleSaveLineEdit = async (line: ProductionLine) => {
+    setErrorMsg(null);
+    const trimmed = editLineName.trim();
+    if (!trimmed) {
+      setErrorMsg('اسم خط الإنتاج مطلوب.');
+      return;
+    }
+    if (
+      lines.some(
+        (other) =>
+          other.id !== line.id &&
+          other.name.trim().toLowerCase() === trimmed.toLowerCase()
+      )
+    ) {
+      setErrorMsg('يوجد خط إنتاج آخر بنفس هذا الاسم.');
+      return;
+    }
+
+    setBusyId(`edit_line_${line.id}`);
+    try {
+      await updateProductionLine({
+        lineId: line.id,
+        name: trimmed,
+        maxLeaves: editLineMax,
+        icon: editLineIcon,
+        order: editLineOrder,
+      });
+      setEditingLineId(null);
+      onSuccessToast(`تم تحديث بيانات "${trimmed}" بنجاح`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث خط الإنتاج');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleDeleteLine = async (line: ProductionLine) => {
     setErrorMsg(null);
     if (lines.length <= 1) {
@@ -463,7 +676,11 @@ export function AdminPanelView({
     const q = workerSearch.trim().toLowerCase();
     if (!q) return true;
     const lineName = lines.find((l) => l.id === w.lineId)?.name || '';
-    return w.name.toLowerCase().includes(q) || lineName.toLowerCase().includes(q);
+    return (
+      w.name.toLowerCase().includes(q) ||
+      (w.employeeCode || '').toLowerCase().includes(q) ||
+      lineName.toLowerCase().includes(q)
+    );
   });
 
   return (
@@ -537,6 +754,11 @@ export function AdminPanelView({
                       <div>
                         <p className="text-sm font-extrabold text-neutral-900">
                           {req.workerName}
+                          {req.workerCode ? (
+                            <span className="font-mono-num text-xs font-semibold text-neutral-500 mr-1.5">
+                              (كود: {req.workerCode})
+                            </span>
+                          ) : null}
                         </p>
                         <p className="text-xs text-neutral-600 mt-0.5">
                           {req.lineName} ·{' '}
@@ -614,7 +836,10 @@ export function AdminPanelView({
                     <div className="flex items-center gap-2 text-sm font-extrabold text-neutral-900">
                       <ArrowLeftRight className="w-4 h-4 text-[#D32F2F]" />
                       <span>
-                        {swap.fromWorkerName} ⇄ {swap.toWorkerName}
+                        {swap.fromWorkerName}
+                        {swap.fromWorkerCode ? ` (${swap.fromWorkerCode})` : ''} ⇄{' '}
+                        {swap.toWorkerName}
+                        {swap.toWorkerCode ? ` (${swap.toWorkerCode})` : ''}
                       </span>
                     </div>
                     <p className="text-xs text-neutral-600">
@@ -681,12 +906,25 @@ export function AdminPanelView({
             onSubmit={handleDirectAddLeave}
             className="lg:col-span-4 bg-white border border-neutral-200 rounded-xl p-5 space-y-4 self-start"
           >
-            <div className="flex items-center gap-2">
-              <CalendarPlus className="w-5 h-5 text-[#D32F2F]" />
-              <h2 className="text-base font-extrabold text-neutral-900">
-                تسجيل إجازة مباشرة
-              </h2>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CalendarPlus className="w-5 h-5 text-[#D32F2F]" />
+                <h2 className="text-base font-extrabold text-neutral-900">
+                  تسجيل إجازة مباشرة
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTab('workers')}
+                className="text-xs font-bold text-[#D32F2F] hover:underline cursor-pointer"
+              >
+                + إضافة عامل
+              </button>
             </div>
+
+            <p className="text-xs text-neutral-500">
+              يمكنك تسجيل إجازة لأي عامل مسجل يدوياً حتى لو لم يقم بتسجيل الدخول بنفسه.
+            </p>
 
             <div>
               <label className="block text-xs font-bold text-neutral-700 mb-1.5">
@@ -697,6 +935,7 @@ export function AdminPanelView({
                 onChange={(e) => {
                   setDlLineId(e.target.value);
                   setDlWorkerId('');
+                  setDlMissingCode('');
                 }}
                 className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
               >
@@ -726,17 +965,38 @@ export function AdminPanelView({
               </label>
               <select
                 value={dlWorkerId}
-                onChange={(e) => setDlWorkerId(e.target.value)}
+                onChange={(e) => {
+                  setDlWorkerId(e.target.value);
+                  setDlMissingCode('');
+                }}
                 className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
               >
                 <option value="">-- اختر العامل --</option>
                 {directEligibleWorkers.map((w) => (
                   <option key={w.id} value={w.id}>
-                    {w.name}
+                    {w.name} {w.employeeCode ? `(كود: ${w.employeeCode})` : '(بدون كود)'}
                   </option>
                 ))}
               </select>
             </div>
+
+            {selectedDirectWorker && !selectedDirectWorker.employeeCode && (
+              <div>
+                <label className="block text-xs font-bold text-[#D32F2F] mb-1.5">
+                  كود العامل * (إجباري لإتمام التسجيل)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={dlMissingCode}
+                  onChange={(e) => setDlMissingCode(e.target.value)}
+                  maxLength={FIELD_LIMITS.CODE_MAX}
+                  dir="ltr"
+                  placeholder="أدخل كود العامل"
+                  className="w-full h-11 px-3 rounded-lg border border-red-300 bg-red-50/40 text-sm font-mono-num focus:outline-none focus:border-[#D32F2F]"
+                />
+              </div>
+            )}
 
             <button
               type="submit"
@@ -771,8 +1031,8 @@ export function AdminPanelView({
                     type="text"
                     value={leaveSearch}
                     onChange={(e) => setLeaveSearch(e.target.value)}
-                    placeholder="بحث بالاسم أو التاريخ..."
-                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-48"
+                    placeholder="بحث بالاسم أو الكود أو التاريخ..."
+                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-52"
                   />
                 </div>
               </div>
@@ -792,6 +1052,11 @@ export function AdminPanelView({
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-neutral-900 truncate">
                         {leave.workerName}
+                        {leave.workerCode && (
+                          <span className="text-xs font-mono-num font-semibold text-neutral-500 mr-2">
+                            (كود: {leave.workerCode})
+                          </span>
+                        )}
                       </p>
                       <p className="text-xs text-neutral-500 mt-0.5">
                         {leave.lineName} ·{' '}
@@ -819,238 +1084,384 @@ export function AdminPanelView({
 
       {/* TAB 3: Workers Management */}
       {tab === 'workers' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <form
-            onSubmit={handleCreateWorker}
-            className="lg:col-span-4 bg-white border border-neutral-200 rounded-xl p-5 space-y-4 self-start"
-          >
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-[#D32F2F]" />
-              <h2 className="text-base font-extrabold text-neutral-900">
-                إضافة عامل جديد
-              </h2>
-            </div>
+        <div className="space-y-5">
+          <ExcelWorkerImportCard
+            lines={lines}
+            workers={workers}
+            supervisors={supervisors}
+            isMainAdmin={isMainAdmin}
+            supervisorRecord={supervisorRecord}
+            actorUid={actorUid}
+            onSuccessToast={onSuccessToast}
+            onError={setErrorMsg}
+          />
 
-            <div>
-              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                اسم العامل
-              </label>
-              <input
-                type="text"
-                value={wName}
-                onChange={(e) => setWName(e.target.value)}
-                maxLength={100}
-                placeholder="مثال: محمود حسن"
-                className="w-full h-11 px-3 rounded-lg border border-neutral-300 text-sm focus:outline-none focus:border-[#D32F2F]"
-              />
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <form
+              onSubmit={handleCreateWorker}
+              className="lg:col-span-4 bg-white border border-neutral-200 rounded-xl p-5 space-y-4 self-start"
+            >
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-[#D32F2F]" />
+                <h2 className="text-base font-extrabold text-neutral-900">
+                  إضافة عامل يدوياً
+                </h2>
+              </div>
 
-            <div>
-              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                الخط / القسم
-              </label>
-              <select
-                value={wLineId}
-                onChange={(e) => setWLineId(e.target.value)}
-                className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
-              >
-                {lines.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <p className="text-xs text-neutral-500">
+                يمكن للمشرف والأدمن إضافة العامل يدوياً بالاسم والكود لتسجيل إجازاته مباشرة بدون حاجة لدخول العامل إلى البرنامج.
+              </p>
 
-            <div>
-              <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                بريد Gmail للربط التلقائي (اختياري)
-              </label>
-              <input
-                type="email"
-                value={wEmail}
-                onChange={(e) => setWEmail(e.target.value)}
-                maxLength={160}
-                dir="ltr"
-                placeholder="worker@gmail.com"
-                className="w-full h-11 px-3 rounded-lg border border-neutral-300 text-sm focus:outline-none focus:border-[#D32F2F]"
-              />
-            </div>
-
-            {isMainAdmin && (
               <div>
                 <label className="block text-xs font-bold text-neutral-700 mb-1.5">
-                  المشرف المسؤول عنه
+                  كود العامل * (إجباري)
                 </label>
-                <select
-                  value={wSupId}
-                  onChange={(e) => setWSupId(e.target.value)}
-                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
-                >
-                  <option value={MAIN_ADMIN_SUPERVISOR_ID}>
-                    {MAIN_ADMIN_SUPERVISOR_NAME}
-                  </option>
-                  {supervisors
-                    .filter((s) => s.active)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={busyId === 'create_worker'}
-              className="w-full min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold cursor-pointer"
-            >
-              {busyId === 'create_worker' ? 'جاري الإضافة...' : 'إضافة العامل'}
-            </button>
-
-            {!isMainAdmin &&
-              supervisorRecord?.canManageTeam &&
-              unassignedWorkers.length > 0 && (
-                <div className="pt-4 border-t border-neutral-200 space-y-2">
-                  <p className="text-xs font-bold text-neutral-800">
-                    ضم أفراد غير معينين إلى فريقك
-                  </p>
-                  <div className="max-h-40 overflow-y-auto space-y-1.5">
-                    {unassignedWorkers.map((uw) => (
-                      <div
-                        key={uw.id}
-                        className="flex items-center justify-between gap-2 p-2 rounded-lg bg-neutral-50 border border-neutral-200 text-xs"
-                      >
-                        <span className="truncate font-semibold">{uw.name}</span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await assignWorkerSupervisor({
-                              workerId: uw.id,
-                              supervisorId: supervisorRecord.id,
-                              supervisorName: supervisorRecord.name,
-                              supervisorUid: actorUid,
-                            });
-                            onSuccessToast(`تم ضم ${uw.name} إلى فريقك`);
-                          }}
-                          className="text-[#D32F2F] font-bold shrink-0 cursor-pointer"
-                        >
-                          + ضم
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-          </form>
-
-          <section className="lg:col-span-8 bg-white border border-neutral-200 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h2 className="text-base font-extrabold text-neutral-900">
-                قائمة العمال ({displayedWorkers.length})
-              </h2>
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-neutral-400 absolute right-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  value={workerSearch}
-                  onChange={(e) => setWorkerSearch(e.target.value)}
-                  placeholder="بحث باسم العامل أو الخط..."
-                  className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-56"
+                  required
+                  value={wCode}
+                  onChange={(e) => setWCode(e.target.value)}
+                  maxLength={FIELD_LIMITS.CODE_MAX}
+                  dir="ltr"
+                  placeholder="مثال: 1025"
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 font-mono-num text-sm focus:outline-none focus:border-[#D32F2F]"
                 />
               </div>
-            </div>
 
-            <div className="divide-y divide-neutral-100 max-h-[560px] overflow-y-auto">
-              {displayedWorkers.map((w) => (
-                <div
-                  key={w.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  اسم العامل *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={wName}
+                  onChange={(e) => setWName(e.target.value)}
+                  maxLength={100}
+                  placeholder="مثال: محمود حسن"
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 text-sm focus:outline-none focus:border-[#D32F2F]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  الخط / القسم
+                </label>
+                <select
+                  value={wLineId}
+                  onChange={(e) => setWLineId(e.target.value)}
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-neutral-900">
-                        {w.name}
-                      </span>
-                      <span className="text-[11px] font-semibold text-neutral-500">
-                        · {w.claimedUid ? 'حساب مرتبط' : 'غير مرتبط بجيميل'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-0.5">
-                      المشرف الحالي: <strong className="text-neutral-800">{w.supervisorName}</strong>
-                    </p>
-                  </div>
+                  {lines.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={w.lineId}
-                      onChange={async (e) => {
-                        await updateWorkerDetails({
-                          workerId: w.id,
-                          name: w.name,
-                          lineId: e.target.value,
-                          active: w.active,
-                        });
-                        onSuccessToast(`تم تحديث خط ${w.name}`);
-                      }}
-                      className="h-9 px-2.5 rounded-lg border border-neutral-200 bg-white text-xs"
-                    >
-                      {lines.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.name}
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                  بريد Gmail للربط التلقائي (اختياري)
+                </label>
+                <input
+                  type="email"
+                  value={wEmail}
+                  onChange={(e) => setWEmail(e.target.value)}
+                  maxLength={160}
+                  dir="ltr"
+                  placeholder="worker@gmail.com"
+                  className="w-full h-11 px-3 rounded-lg border border-neutral-300 text-sm focus:outline-none focus:border-[#D32F2F]"
+                />
+              </div>
+
+              {isMainAdmin && (
+                <div>
+                  <label className="block text-xs font-bold text-neutral-700 mb-1.5">
+                    المشرف المسؤول عنه
+                  </label>
+                  <select
+                    value={wSupId}
+                    onChange={(e) => setWSupId(e.target.value)}
+                    className="w-full h-11 px-3 rounded-lg border border-neutral-300 bg-white text-sm focus:outline-none focus:border-[#D32F2F]"
+                  >
+                    <option value={MAIN_ADMIN_SUPERVISOR_ID}>
+                      {MAIN_ADMIN_SUPERVISOR_NAME}
+                    </option>
+                    {supervisors
+                      .filter((s) => s.active)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
                         </option>
                       ))}
-                    </select>
-
-                    {isMainAdmin && (
-                      <select
-                        value={w.supervisorId}
-                        onChange={async (e) => {
-                          const sid = e.target.value;
-                          const sup = supervisors.find((s) => s.id === sid);
-                          await assignWorkerSupervisor({
-                            workerId: w.id,
-                            supervisorId: sid,
-                            supervisorName: sup?.name || MAIN_ADMIN_SUPERVISOR_NAME,
-                            supervisorUid:
-                              sid === MAIN_ADMIN_SUPERVISOR_ID
-                                ? actorUid
-                                : sup?.uid || '',
-                          });
-                          onSuccessToast(`تم تحديث المشرف لـ ${w.name}`);
-                        }}
-                        className="h-9 px-2.5 rounded-lg border border-neutral-200 bg-white text-xs"
-                      >
-                        <option value={MAIN_ADMIN_SUPERVISOR_ID}>
-                          {MAIN_ADMIN_SUPERVISOR_NAME}
-                        </option>
-                        {supervisors.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-
-                    {isMainAdmin && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await deleteWorkerByAdmin(w.id);
-                          onSuccessToast(`تم حذف ${w.name}`);
-                        }}
-                        title="حذف العامل"
-                        className="p-2 rounded-lg border border-neutral-200 text-neutral-400 hover:text-[#D32F2F] cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
+                  </select>
                 </div>
-              ))}
-            </div>
-          </section>
+              )}
+
+              <button
+                type="submit"
+                disabled={busyId === 'create_worker'}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold cursor-pointer disabled:opacity-50"
+              >
+                {busyId === 'create_worker' ? 'جاري الإضافة...' : 'إضافة العامل'}
+              </button>
+
+              {!isMainAdmin &&
+                supervisorRecord?.canManageTeam &&
+                unassignedWorkers.length > 0 && (
+                  <div className="pt-4 border-t border-neutral-200 space-y-2">
+                    <p className="text-xs font-bold text-neutral-800">
+                      ضم أفراد غير معينين إلى فريقك
+                    </p>
+                    <div className="max-h-40 overflow-y-auto space-y-1.5">
+                      {unassignedWorkers.map((uw) => (
+                        <div
+                          key={uw.id}
+                          className="flex items-center justify-between gap-2 p-2 rounded-lg bg-neutral-50 border border-neutral-200 text-xs"
+                        >
+                          <span className="truncate font-semibold">
+                            {uw.name}
+                            {uw.employeeCode ? ` (${uw.employeeCode})` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await assignWorkerSupervisor({
+                                workerId: uw.id,
+                                supervisorId: supervisorRecord.id,
+                                supervisorName: supervisorRecord.name,
+                                supervisorUid: actorUid,
+                              });
+                              onSuccessToast(`تم ضم ${uw.name} إلى فريقك`);
+                            }}
+                            className="text-[#D32F2F] font-bold shrink-0 cursor-pointer"
+                          >
+                            + ضم
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </form>
+
+            <section className="lg:col-span-8 bg-white border border-neutral-200 rounded-xl overflow-hidden">
+              <div className="p-4 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <h2 className="text-base font-extrabold text-neutral-900">
+                  قائمة العمال ({displayedWorkers.length})
+                </h2>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={workerSearch}
+                    onChange={(e) => setWorkerSearch(e.target.value)}
+                    placeholder="بحث بالاسم أو الكود أو الخط..."
+                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-60"
+                  />
+                </div>
+              </div>
+
+              <div className="divide-y divide-neutral-100 max-h-[560px] overflow-y-auto">
+                {displayedWorkers.map((w) => {
+                  const isEditing = editingWorkerId === w.id;
+                  const lineName = lines.find((l) => l.id === w.lineId)?.name || w.lineId;
+
+                  return (
+                    <div key={w.id} className="p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-bold text-neutral-900">
+                              {w.name}
+                            </span>
+                            <span
+                              className={`text-xs font-mono-num font-bold ${
+                                w.employeeCode ? 'text-[#D32F2F]' : 'text-amber-700'
+                              }`}
+                            >
+                              · كود: {w.employeeCode || 'غير مسجل'}
+                            </span>
+                            <span className="text-[11px] font-semibold text-neutral-500">
+                              · {w.claimedUid ? 'حساب مرتبط' : 'مسجل يدوياً'}
+                            </span>
+                            {!w.active && (
+                              <span className="text-[11px] font-bold text-neutral-400">
+                                · موقوف
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-neutral-500 mt-0.5">
+                            الخط: <strong className="text-neutral-700">{lineName}</strong> · المشرف:{' '}
+                            <strong className="text-neutral-800">{w.supervisorName}</strong>
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <select
+                            value={w.lineId}
+                            onChange={async (e) => {
+                              if (!w.employeeCode) {
+                                startEditWorker(w);
+                                setEditWorkerLineId(e.target.value);
+                                setErrorMsg('يرجى إدخال كود العامل أولاً لحفظ تعديل بياناته.');
+                                return;
+                              }
+                              await updateWorkerDetails({
+                                workerId: w.id,
+                                employeeCode: w.employeeCode,
+                                name: w.name,
+                                lineId: e.target.value,
+                                active: w.active,
+                              });
+                              onSuccessToast(`تم تحديث خط ${w.name}`);
+                            }}
+                            className="h-9 px-2.5 rounded-lg border border-neutral-200 bg-white text-xs"
+                          >
+                            {lines.map((l) => (
+                              <option key={l.id} value={l.id}>
+                                {l.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          {isMainAdmin && (
+                            <select
+                              value={w.supervisorId}
+                              onChange={async (e) => {
+                                const sid = e.target.value;
+                                const sup = supervisors.find((s) => s.id === sid);
+                                await assignWorkerSupervisor({
+                                  workerId: w.id,
+                                  supervisorId: sid,
+                                  supervisorName: sup?.name || MAIN_ADMIN_SUPERVISOR_NAME,
+                                  supervisorUid:
+                                    sid === MAIN_ADMIN_SUPERVISOR_ID
+                                      ? actorUid
+                                      : sup?.uid || '',
+                                });
+                                onSuccessToast(`تم تحديث المشرف لـ ${w.name}`);
+                              }}
+                              className="h-9 px-2.5 rounded-lg border border-neutral-200 bg-white text-xs"
+                            >
+                              <option value={MAIN_ADMIN_SUPERVISOR_ID}>
+                                {MAIN_ADMIN_SUPERVISOR_NAME}
+                              </option>
+                              {supervisors.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              isEditing ? setEditingWorkerId(null) : startEditWorker(w)
+                            }
+                            className="px-2.5 h-9 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>{isEditing ? 'إغلاق' : 'تعديل'}</span>
+                          </button>
+
+                          {isMainAdmin && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await deleteWorkerByAdmin(w.id);
+                                onSuccessToast(`تم حذف ${w.name}`);
+                              }}
+                              title="حذف العامل"
+                              className="p-2 rounded-lg border border-neutral-200 text-neutral-400 hover:text-[#D32F2F] cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {isEditing && (
+                        <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              كود العامل *
+                            </label>
+                            <input
+                              type="text"
+                              value={editWorkerCode}
+                              onChange={(e) => setEditWorkerCode(e.target.value)}
+                              maxLength={FIELD_LIMITS.CODE_MAX}
+                              dir="ltr"
+                              className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white font-mono-num text-xs focus:outline-none focus:border-[#D32F2F]"
+                            />
+                          </div>
+                          <div className="sm:col-span-4">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              الاسم *
+                            </label>
+                            <input
+                              type="text"
+                              value={editWorkerName}
+                              onChange={(e) => setEditWorkerName(e.target.value)}
+                              maxLength={FIELD_LIMITS.NAME_MAX}
+                              className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                            />
+                          </div>
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              الخط / القسم
+                            </label>
+                            <select
+                              value={editWorkerLineId}
+                              onChange={(e) => setEditWorkerLineId(e.target.value)}
+                              className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                            >
+                              {lines.map((l) => (
+                                <option key={l.id} value={l.id}>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="sm:col-span-2 flex items-center gap-2 h-9">
+                            <label className="flex items-center gap-1.5 text-xs font-bold text-neutral-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editWorkerActive}
+                                onChange={(e) => setEditWorkerActive(e.target.checked)}
+                                className="w-4 h-4 accent-[#D32F2F]"
+                              />
+                              <span>نشط</span>
+                            </label>
+                          </div>
+                          <div className="sm:col-span-12 flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingWorkerId(null)}
+                              className="px-3 py-1.5 rounded-lg border border-neutral-300 bg-white text-xs font-bold text-neutral-700 cursor-pointer"
+                            >
+                              إلغاء
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyId === `edit_worker_${w.id}`}
+                              onClick={() => handleSaveWorkerEdit(w)}
+                              className="px-3.5 py-1.5 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              {busyId === `edit_worker_${w.id}` ? 'جاري الحفظ...' : 'حفظ التعديلات'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
         </div>
       )}
 
@@ -1173,6 +1584,7 @@ export function AdminPanelView({
                         (w) => w.supervisorId === sup.id
                       );
                       const isExpanded = expandedSupId === sup.id;
+                      const isEditingSup = editingSupId === sup.id;
 
                       return (
                         <div key={sup.id} className="p-4 space-y-3">
@@ -1204,6 +1616,18 @@ export function AdminPanelView({
                               <button
                                 type="button"
                                 onClick={() =>
+                                  isEditingSup
+                                    ? setEditingSupId(null)
+                                    : startEditSupervisor(sup)
+                                }
+                                className="px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>{isEditingSup ? 'إغلاق التعديل' : 'تعديل البيانات'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
                                   setExpandedSupId(isExpanded ? null : sup.id)
                                 }
                                 className="px-3 py-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-xs font-bold cursor-pointer"
@@ -1229,6 +1653,7 @@ export function AdminPanelView({
                                 onClick={async () => {
                                   await deleteSupervisorAndReassign({
                                     supervisorId: sup.id,
+                                    supervisorUid: sup.uid,
                                     mainAdminUid: actorUid,
                                   });
                                   onSuccessToast('تم حذف المشرف ونقل أفراده للأدمن الرئيسي');
@@ -1240,6 +1665,77 @@ export function AdminPanelView({
                               </button>
                             </div>
                           </div>
+
+                          {isEditingSup && (
+                            <div className="p-3.5 rounded-lg bg-neutral-50 border border-neutral-200 space-y-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                    اسم المشرف *
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={editSupName}
+                                    onChange={(e) => setEditSupName(e.target.value)}
+                                    maxLength={FIELD_LIMITS.NAME_MAX}
+                                    className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                    بريد Google الإلكتروني *
+                                  </label>
+                                  <input
+                                    type="email"
+                                    value={editSupEmail}
+                                    onChange={(e) => setEditSupEmail(e.target.value)}
+                                    maxLength={FIELD_LIMITS.EMAIL_MAX}
+                                    dir="ltr"
+                                    className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-neutral-700">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editSupActive}
+                                    onChange={(e) => setEditSupActive(e.target.checked)}
+                                    className="w-4 h-4 accent-[#D32F2F]"
+                                  />
+                                  <span>حساب مفعّل</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editSupCanManage}
+                                    onChange={(e) => setEditSupCanManage(e.target.checked)}
+                                    className="w-4 h-4 accent-[#D32F2F]"
+                                  />
+                                  <span>السماح بضم أفراد غير معينين</span>
+                                </label>
+                              </div>
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingSupId(null)}
+                                  className="px-3 py-1.5 rounded-lg border border-neutral-300 bg-white text-xs font-bold text-neutral-700 cursor-pointer"
+                                >
+                                  إلغاء
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyId === `edit_sup_${sup.id}`}
+                                  onClick={() => handleSaveSupervisorEdit(sup)}
+                                  className="px-3.5 py-1.5 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                                >
+                                  {busyId === `edit_sup_${sup.id}`
+                                    ? 'جاري الحفظ...'
+                                    : 'حفظ بيانات المشرف'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {isExpanded && (
                             <div className="pt-2 border-t border-neutral-100">
@@ -1269,6 +1765,7 @@ export function AdminPanelView({
                                       />
                                       <span className="font-semibold text-neutral-800 truncate">
                                         {w.name}
+                                        {w.employeeCode ? ` (${w.employeeCode})` : ''}
                                       </span>
                                     </label>
                                   );
@@ -1373,48 +1870,145 @@ export function AdminPanelView({
                 </form>
 
                 {/* Existing Lines Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {lines.map((line) => (
-                    <div
-                      key={line.id}
-                      className="flex items-center justify-between gap-2 p-3 rounded-lg bg-neutral-50 border border-neutral-200"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <LineIcon icon={line.icon} className="w-4 h-4 text-[#D32F2F] shrink-0" />
-                        <span className="text-xs font-bold text-neutral-800 truncate">
-                          {line.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[11px] text-neutral-500">الحد:</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={20}
-                          value={line.maxLeaves}
-                          onChange={async (e) => {
-                            const val = Number(e.target.value);
-                            if (val >= 1 && val <= 20) {
-                              await updateLineQuota(line.id, val);
-                              onSuccessToast(`تم تحديث حد ${line.name} إلى ${val}`);
-                            }
-                          }}
-                          className="w-14 h-8 px-1.5 rounded-md border border-neutral-300 bg-white text-center text-xs font-mono-num font-bold"
-                        />
-                        {lines.length > 1 && (
-                          <button
-                            type="button"
-                            disabled={busyId === `delete_line_${line.id}`}
-                            onClick={() => handleDeleteLine(line)}
-                            title="حذف خط الإنتاج (إذا لم يكن مرتبطاً بعمال أو إجازات)"
-                            className="p-1.5 rounded-md border border-neutral-200 bg-white text-neutral-400 hover:text-[#D32F2F] hover:border-red-200 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                <div className="grid grid-cols-1 gap-2.5">
+                  {lines.map((line) => {
+                    const isEditingLine = editingLineId === line.id;
+                    return (
+                      <div
+                        key={line.id}
+                        className="p-3 rounded-lg bg-neutral-50 border border-neutral-200 space-y-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <LineIcon icon={line.icon} className="w-4 h-4 text-[#D32F2F] shrink-0" />
+                            <span className="text-xs font-bold text-neutral-800 truncate">
+                              {line.name}
+                            </span>
+                            <span className="text-[11px] font-mono-num text-neutral-500">
+                              (ترتيب: {line.order})
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[11px] text-neutral-500">الحد:</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={line.maxLeaves}
+                              onChange={async (e) => {
+                                const val = Number(e.target.value);
+                                if (val >= 1 && val <= 20) {
+                                  await updateLineQuota(line.id, val);
+                                  onSuccessToast(`تم تحديث حد ${line.name} إلى ${val}`);
+                                }
+                              }}
+                              className="w-14 h-8 px-1.5 rounded-md border border-neutral-300 bg-white text-center text-xs font-mono-num font-bold"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                isEditingLine
+                                  ? setEditingLineId(null)
+                                  : startEditLine(line)
+                              }
+                              title="تعديل بيانات خط الإنتاج"
+                              className="px-2.5 h-8 rounded-md border border-neutral-300 bg-white hover:bg-neutral-100 text-neutral-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>{isEditingLine ? 'إغلاق' : 'تعديل'}</span>
+                            </button>
+                            {lines.length > 1 && (
+                              <button
+                                type="button"
+                                disabled={busyId === `delete_line_${line.id}`}
+                                onClick={() => handleDeleteLine(line)}
+                                title="حذف خط الإنتاج (إذا لم يكن مرتبطاً بعمال أو إجازات)"
+                                className="p-1.5 rounded-md border border-neutral-200 bg-white text-neutral-400 hover:text-[#D32F2F] hover:border-red-200 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {isEditingLine && (
+                          <div className="p-3 rounded-lg bg-white border border-neutral-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                            <div className="sm:col-span-5">
+                              <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                اسم الخط / القسم *
+                              </label>
+                              <input
+                                type="text"
+                                value={editLineName}
+                                onChange={(e) => setEditLineName(e.target.value)}
+                                maxLength={FIELD_LIMITS.LINE_NAME_MAX}
+                                className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-[#D32F2F]"
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                الأيقونة
+                              </label>
+                              <select
+                                value={editLineIcon}
+                                onChange={(e) => setEditLineIcon(e.target.value)}
+                                className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                              >
+                                <option value="factory">مصنع / إنتاج</option>
+                                <option value="cpu">أجهزة / تجميع</option>
+                                <option value="settings">صيانة / ميكانيكا</option>
+                                <option value="layers">خامات / تغليف</option>
+                                <option value="printer">طباعة / تشطيب</option>
+                              </select>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                الحد اليومي
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={20}
+                                value={editLineMax}
+                                onChange={(e) => setEditLineMax(Number(e.target.value))}
+                                className="w-full h-9 px-2 rounded-lg border border-neutral-300 text-center font-mono-num text-xs font-bold focus:outline-none focus:border-[#D32F2F]"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                الترتيب
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={editLineOrder}
+                                onChange={(e) => setEditLineOrder(Number(e.target.value))}
+                                className="w-full h-9 px-2 rounded-lg border border-neutral-300 text-center font-mono-num text-xs font-bold focus:outline-none focus:border-[#D32F2F]"
+                              />
+                            </div>
+                            <div className="sm:col-span-12 flex items-center justify-end gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingLineId(null)}
+                                className="px-3 py-1.5 rounded-lg border border-neutral-300 bg-white text-xs font-bold text-neutral-700 cursor-pointer"
+                              >
+                                إلغاء
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busyId === `edit_line_${line.id}`}
+                                onClick={() => handleSaveLineEdit(line)}
+                                className="px-3.5 py-1.5 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                              >
+                                {busyId === `edit_line_${line.id}` ? 'جاري الحفظ...' : 'حفظ الخط'}
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             </div>
