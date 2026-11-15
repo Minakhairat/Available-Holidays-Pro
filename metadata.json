@@ -1,0 +1,6 @@
+{
+  "name": "الإجازات المتاحة",
+  "description": "نظام متكامل لعرض وطلب وتبديل وإدارة إجازات عمال الإنتاج عبر Firebase",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

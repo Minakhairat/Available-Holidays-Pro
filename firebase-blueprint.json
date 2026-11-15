@@ -1,0 +1,780 @@
+{
+  "entities": {
+    "ProductionLine": {
+      "title": "ProductionLine",
+      "description": "A factory production line or department with a daily leave quota.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique line identifier."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Arabic display name of the production line."
+        },
+        "maxLeaves": {
+          "type": "integer",
+          "description": "Maximum allowed concurrent leaves per day."
+        },
+        "order": {
+          "type": "integer",
+          "description": "Display sort order."
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Icon key for UI display."
+        },
+        "isPublicSchedule": {
+          "type": "boolean",
+          "description": "Marks line schedule metadata as readable by verified team members."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": ["id", "name", "maxLeaves", "order", "icon", "isPublicSchedule", "updatedAt"]
+    },
+    "Worker": {
+      "title": "Worker",
+      "description": "Non-PII workplace record for a production worker and their assigned supervisor.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique worker identifier."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Worker display name."
+        },
+        "lineId": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned production line ID."
+        },
+        "supervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned supervisor ID or main_admin."
+        },
+        "supervisorName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Display name of the assigned supervisor."
+        },
+        "supervisorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Firebase Auth UID of assigned supervisor once activated, or empty string."
+        },
+        "claimedUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the worker once linked, or empty string."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the worker is currently active."
+        },
+        "isTeamDirectory": {
+          "type": "boolean",
+          "description": "Marks non-PII worker directory entry as readable by verified team members."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "lineId",
+        "supervisorId",
+        "supervisorName",
+        "supervisorUid",
+        "claimedUid",
+        "active",
+        "isTeamDirectory",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WorkerPii": {
+      "title": "WorkerPii",
+      "description": "Isolated PII record containing a worker's pre-registered email for account matching.",
+      "type": "object",
+      "properties": {
+        "workerId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Matching worker document ID."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Lowercase email address of the worker."
+        },
+        "claimedUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Linked Firebase Auth UID or empty string."
+        },
+        "supervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned supervisor ID."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": ["workerId", "email", "claimedUid", "supervisorId", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile storing email PII and linked worker ID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Verified user email."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "User display name."
+        },
+        "workerId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Linked worker ID or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": ["uid", "email", "displayName", "workerId", "createdAt", "updatedAt"]
+    },
+    "Supervisor": {
+      "title": "Supervisor",
+      "description": "Sub-admin / supervisor authorization record created by the main admin.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique supervisor ID."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Supervisor display name."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Lowercase Google email of the supervisor."
+        },
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Bound Firebase Auth UID once signed in, or empty string."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether supervisor permissions are active."
+        },
+        "canManageTeam": {
+          "type": "boolean",
+          "description": "Whether supervisor can add/select workers under their supervision."
+        },
+        "createdByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Main admin UID who created this supervisor."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": ["id", "name", "email", "uid", "active", "canManageTeam", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "SupervisorAccount": {
+      "title": "SupervisorAccount",
+      "description": "Maps a verified supervisor Auth UID to their Supervisor document ID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID."
+        },
+        "supervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Supervisor document ID."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Verified lowercase email."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Binding timestamp."
+        }
+      },
+      "required": ["uid", "supervisorId", "email", "createdAt"]
+    },
+    "LeaveEntry": {
+      "title": "LeaveEntry",
+      "description": "An approved leave slot visible on the production schedule.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique leave entry ID."
+        },
+        "lineId": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Production line ID."
+        },
+        "lineName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Production line Arabic name."
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "ISO date YYYY-MM-DD."
+        },
+        "workerId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Worker ID."
+        },
+        "workerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Worker display name."
+        },
+        "workerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Worker Auth UID or empty string."
+        },
+        "supervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned supervisor ID."
+        },
+        "approvedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of admin or supervisor who approved/created the leave."
+        },
+        "source": {
+          "type": "string",
+          "enum": ["seed", "direct", "request", "swap"],
+          "description": "Origin of the leave entry."
+        },
+        "isPublicSchedule": {
+          "type": "boolean",
+          "description": "Marks leave schedule entry as readable by verified team members."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "lineId",
+        "lineName",
+        "date",
+        "workerId",
+        "workerName",
+        "workerUid",
+        "supervisorId",
+        "approvedByUid",
+        "source",
+        "isPublicSchedule",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "A worker's request for an available leave slot pending supervisor/admin approval.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique leave request ID."
+        },
+        "lineId": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Production line ID."
+        },
+        "lineName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Production line Arabic name."
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Requested date YYYY-MM-DD."
+        },
+        "workerId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Worker ID."
+        },
+        "workerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Worker display name."
+        },
+        "requesterUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Firebase Auth UID of requesting worker."
+        },
+        "supervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned supervisor ID."
+        },
+        "supervisorName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Assigned supervisor display name."
+        },
+        "supervisorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Supervisor Auth UID or empty string."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Optional note or reason from worker."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected", "cancelled"],
+          "description": "Current workflow state."
+        },
+        "rejectionReason": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Rejection note or empty string."
+        },
+        "reviewedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of reviewer or empty string."
+        },
+        "reviewedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Name of reviewer or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "lineId",
+        "lineName",
+        "date",
+        "workerId",
+        "workerName",
+        "requesterUid",
+        "supervisorId",
+        "supervisorName",
+        "supervisorUid",
+        "reason",
+        "status",
+        "rejectionReason",
+        "reviewedByUid",
+        "reviewedByName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SwapRequest": {
+      "title": "SwapRequest",
+      "description": "A leave swap/transfer request between two workers requiring peer and supervisor approval.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique swap request ID."
+        },
+        "lineId": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Production line ID."
+        },
+        "lineName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Production line Arabic name."
+        },
+        "fromWorkerId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Requesting worker ID."
+        },
+        "fromWorkerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Requesting worker name."
+        },
+        "fromUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Requesting worker Auth UID."
+        },
+        "fromSupervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Requesting worker's supervisor ID."
+        },
+        "fromSupervisorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Requesting worker's supervisor Auth UID or empty string."
+        },
+        "fromLeaveId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional offered leave ID or empty string."
+        },
+        "fromDate": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Offered leave date YYYY-MM-DD or empty string."
+        },
+        "toWorkerId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target worker ID."
+        },
+        "toWorkerName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Target worker name."
+        },
+        "toUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target worker Auth UID."
+        },
+        "toSupervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target worker's supervisor ID."
+        },
+        "toSupervisorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target worker's supervisor Auth UID or empty string."
+        },
+        "toLeaveId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target leave ID being requested."
+        },
+        "toDate": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Target leave date YYYY-MM-DD."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Swap note or message."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending_peer",
+            "pending_supervisor",
+            "approved",
+            "rejected_by_peer",
+            "rejected_by_supervisor",
+            "cancelled"
+          ],
+          "description": "Current swap workflow state."
+        },
+        "rejectionReason": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Rejection note or empty string."
+        },
+        "reviewedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Supervisor/Admin UID who finalized or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "lineId",
+        "lineName",
+        "fromWorkerId",
+        "fromWorkerName",
+        "fromUid",
+        "fromSupervisorId",
+        "fromSupervisorUid",
+        "fromLeaveId",
+        "fromDate",
+        "toWorkerId",
+        "toWorkerName",
+        "toUid",
+        "toSupervisorId",
+        "toSupervisorUid",
+        "toLeaveId",
+        "toDate",
+        "note",
+        "status",
+        "rejectionReason",
+        "reviewedByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification for leave and swap workflow events.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique notification ID."
+        },
+        "recipientUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target user UID when recipientRole is user, else empty string."
+        },
+        "recipientRole": {
+          "type": "string",
+          "enum": ["user", "supervisor", "admin"],
+          "description": "Routing role for notification."
+        },
+        "recipientSupervisorId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Target supervisor ID when recipientRole is supervisor, else empty string."
+        },
+        "recipientSupervisorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target supervisor Auth UID or empty string."
+        },
+        "senderUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Auth UID of sender."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Notification title."
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "Notification body."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "leave_requested",
+            "leave_approved",
+            "leave_rejected",
+            "leave_cancelled",
+            "swap_requested",
+            "swap_peer_accepted",
+            "swap_peer_rejected",
+            "swap_approved",
+            "swap_rejected",
+            "admin_notice"
+          ],
+          "description": "Notification event category."
+        },
+        "relatedId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Related leave, request, or swap ID."
+        },
+        "isRead": {
+          "type": "boolean",
+          "description": "Whether the recipient has read this notification."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "recipientUid",
+        "recipientRole",
+        "recipientSupervisorId",
+        "recipientSupervisorUid",
+        "senderUid",
+        "title",
+        "message",
+        "type",
+        "relatedId",
+        "isRead",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/lines/{lineId}": {
+      "schema": { "$ref": "#/entities/ProductionLine" },
+      "description": "Factory production lines and daily leave limits."
+    },
+    "/workers/{workerId}": {
+      "schema": { "$ref": "#/entities/Worker" },
+      "description": "Non-PII directory of production workers and their assigned supervisor."
+    },
+    "/worker_pii/{workerId}": {
+      "schema": { "$ref": "#/entities/WorkerPii" },
+      "description": "Isolated PII emails for pre-registered workers."
+    },
+    "/user_profiles/{uid}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user account profiles with verified email PII."
+    },
+    "/supervisors/{supervisorId}": {
+      "schema": { "$ref": "#/entities/Supervisor" },
+      "description": "Sub-admins / supervisors managed by the main admin."
+    },
+    "/supervisor_accounts/{uid}": {
+      "schema": { "$ref": "#/entities/SupervisorAccount" },
+      "description": "UID-to-SupervisorId bindings verified on supervisor sign-in."
+    },
+    "/leaves/{leaveId}": {
+      "schema": { "$ref": "#/entities/LeaveEntry" },
+      "description": "Approved leaves displayed on daily and monthly schedules."
+    },
+    "/leave_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/LeaveRequest" },
+      "description": "Worker leave requests pending supervisor or admin decision."
+    },
+    "/swap_requests/{swapId}": {
+      "schema": { "$ref": "#/entities/SwapRequest" },
+      "description": "Peer-to-peer leave swap requests requiring peer and supervisor approval."
+    },
+    "/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Notifications for leave approvals, rejections, and swap updates."
+    }
+  }
+}

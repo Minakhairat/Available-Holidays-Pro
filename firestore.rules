@@ -1,0 +1,623 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ====================
+    // Global Helpers
+    // ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDateStr(d) {
+      return d is string && d.size() == 10 && d.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true && request.auth.token.email is string;
+    }
+
+    function verifiedEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isMainAdmin() {
+      return isVerified() && request.auth.token.email.lower() == 'minakhairat1@gmail.com';
+    }
+
+    function hasSupervisorAccount() {
+      return isVerified() && exists(/databases/$(database)/documents/supervisor_accounts/$(request.auth.uid));
+    }
+
+    function mySupervisorId() {
+      return get(/databases/$(database)/documents/supervisor_accounts/$(request.auth.uid)).data.supervisorId;
+    }
+
+    function isSupervisor() {
+      return hasSupervisorAccount()
+        && exists(/databases/$(database)/documents/supervisors/$(mySupervisorId()))
+        && get(/databases/$(database)/documents/supervisors/$(mySupervisorId())).data.active == true;
+    }
+
+    function canSupervisorManageTeam() {
+      return isSupervisor()
+        && get(/databases/$(database)/documents/supervisors/$(mySupervisorId())).data.canManageTeam == true;
+    }
+
+    function isSupervisorOfWorker(workerId) {
+      return isSupervisor()
+        && isValidId(workerId)
+        && exists(/databases/$(database)/documents/workers/$(workerId))
+        && get(/databases/$(database)/documents/workers/$(workerId)).data.supervisorId == mySupervisorId();
+    }
+
+    // ====================
+    // Validation Blueprints
+    // ====================
+    function isValidLine(data) {
+      return data.keys().hasAll(['id', 'name', 'maxLeaves', 'order', 'icon', 'isPublicSchedule', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'maxLeaves', 'order', 'icon', 'isPublicSchedule', 'updatedAt'])
+        && isValidId(data.id) && data.id.size() <= 32
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.maxLeaves is int && data.maxLeaves >= 1 && data.maxLeaves <= 20
+        && data.order is int && data.order >= 0 && data.order <= 100
+        && data.icon is string && data.icon.size() >= 1 && data.icon.size() <= 40
+        && data.isPublicSchedule is bool && data.isPublicSchedule == true
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorker(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'lineId', 'supervisorId', 'supervisorName',
+          'supervisorUid', 'claimedUid', 'active', 'isTeamDirectory', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'lineId', 'supervisorId', 'supervisorName',
+          'supervisorUid', 'claimedUid', 'active', 'isTeamDirectory', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id.size() <= 64
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && isValidId(data.lineId) && data.lineId.size() <= 32
+        && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
+        && data.supervisorName is string && data.supervisorName.size() >= 1 && data.supervisorName.size() <= 100
+        && data.supervisorUid is string && data.supervisorUid.size() <= 128
+        && data.claimedUid is string && data.claimedUid.size() <= 128
+        && data.active is bool
+        && data.isTeamDirectory is bool && data.isTeamDirectory == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkerPii(data) {
+      return data.keys().hasAll(['workerId', 'email', 'claimedUid', 'supervisorId', 'updatedAt'])
+        && data.keys().hasOnly(['workerId', 'email', 'claimedUid', 'supervisorId', 'updatedAt'])
+        && isValidId(data.workerId) && data.workerId.size() <= 64
+        && data.email is string && data.email.size() <= 160
+        && data.claimedUid is string && data.claimedUid.size() <= 128
+        && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'workerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'workerId', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.workerId is string && data.workerId.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSupervisor(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'email', 'uid', 'active', 'canManageTeam', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'email', 'uid', 'active', 'canManageTeam', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id.size() <= 64
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.uid is string && data.uid.size() <= 128
+        && data.active is bool
+        && data.canManageTeam is bool
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSupervisorAccount(data) {
+      return data.keys().hasAll(['uid', 'supervisorId', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'supervisorId', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLeaveEntry(data) {
+      return data.keys().hasAll([
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'workerUid',
+          'supervisorId', 'approvedByUid', 'source', 'isPublicSchedule', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'workerUid',
+          'supervisorId', 'approvedByUid', 'source', 'isPublicSchedule', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.lineId) && data.lineId.size() <= 32
+        && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
+        && isValidDateStr(data.date)
+        && isValidId(data.workerId) && data.workerId.size() <= 64
+        && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 100
+        && data.workerUid is string && data.workerUid.size() <= 128
+        && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
+        && isValidId(data.approvedByUid)
+        && data.source in ['seed', 'direct', 'request', 'swap']
+        && data.isPublicSchedule is bool && data.isPublicSchedule == true
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLeaveRequest(data) {
+      return data.keys().hasAll([
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'requesterUid',
+          'supervisorId', 'supervisorName', 'supervisorUid', 'reason', 'status',
+          'rejectionReason', 'reviewedByUid', 'reviewedByName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'lineId', 'lineName', 'date', 'workerId', 'workerName', 'requesterUid',
+          'supervisorId', 'supervisorName', 'supervisorUid', 'reason', 'status',
+          'rejectionReason', 'reviewedByUid', 'reviewedByName', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.lineId) && data.lineId.size() <= 32
+        && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
+        && isValidDateStr(data.date)
+        && isValidId(data.workerId) && data.workerId.size() <= 64
+        && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 100
+        && isValidId(data.requesterUid)
+        && isValidId(data.supervisorId) && data.supervisorId.size() <= 64
+        && data.supervisorName is string && data.supervisorName.size() >= 1 && data.supervisorName.size() <= 100
+        && data.supervisorUid is string && data.supervisorUid.size() <= 128
+        && data.reason is string && data.reason.size() <= 300
+        && data.status in ['pending', 'approved', 'rejected', 'cancelled']
+        && data.rejectionReason is string && data.rejectionReason.size() <= 300
+        && data.reviewedByUid is string && data.reviewedByUid.size() <= 128
+        && data.reviewedByName is string && data.reviewedByName.size() <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSwapRequest(data) {
+      return data.keys().hasAll([
+          'id', 'lineId', 'lineName', 'fromWorkerId', 'fromWorkerName', 'fromUid',
+          'fromSupervisorId', 'fromSupervisorUid', 'fromLeaveId', 'fromDate',
+          'toWorkerId', 'toWorkerName', 'toUid', 'toSupervisorId', 'toSupervisorUid',
+          'toLeaveId', 'toDate', 'note', 'status', 'rejectionReason', 'reviewedByUid',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'lineId', 'lineName', 'fromWorkerId', 'fromWorkerName', 'fromUid',
+          'fromSupervisorId', 'fromSupervisorUid', 'fromLeaveId', 'fromDate',
+          'toWorkerId', 'toWorkerName', 'toUid', 'toSupervisorId', 'toSupervisorUid',
+          'toLeaveId', 'toDate', 'note', 'status', 'rejectionReason', 'reviewedByUid',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.lineId) && data.lineId.size() <= 32
+        && data.lineName is string && data.lineName.size() >= 1 && data.lineName.size() <= 80
+        && isValidId(data.fromWorkerId) && data.fromWorkerId.size() <= 64
+        && data.fromWorkerName is string && data.fromWorkerName.size() >= 1 && data.fromWorkerName.size() <= 100
+        && isValidId(data.fromUid)
+        && isValidId(data.fromSupervisorId) && data.fromSupervisorId.size() <= 64
+        && data.fromSupervisorUid is string && data.fromSupervisorUid.size() <= 128
+        && data.fromLeaveId is string && data.fromLeaveId.size() <= 128
+        && data.fromDate is string && (data.fromDate == '' || isValidDateStr(data.fromDate))
+        && isValidId(data.toWorkerId) && data.toWorkerId.size() <= 64
+        && data.toWorkerName is string && data.toWorkerName.size() >= 1 && data.toWorkerName.size() <= 100
+        && data.toUid is string && data.toUid.size() <= 128
+        && isValidId(data.toSupervisorId) && data.toSupervisorId.size() <= 64
+        && data.toSupervisorUid is string && data.toSupervisorUid.size() <= 128
+        && isValidId(data.toLeaveId)
+        && isValidDateStr(data.toDate)
+        && data.note is string && data.note.size() <= 300
+        && data.status in ['pending_peer', 'pending_supervisor', 'approved', 'rejected_by_peer', 'rejected_by_supervisor', 'cancelled']
+        && data.rejectionReason is string && data.rejectionReason.size() <= 300
+        && data.reviewedByUid is string && data.reviewedByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+          'id', 'recipientUid', 'recipientRole', 'recipientSupervisorId',
+          'recipientSupervisorUid', 'senderUid', 'title', 'message',
+          'type', 'relatedId', 'isRead', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'recipientUid', 'recipientRole', 'recipientSupervisorId',
+          'recipientSupervisorUid', 'senderUid', 'title', 'message',
+          'type', 'relatedId', 'isRead', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && data.recipientUid is string && data.recipientUid.size() <= 128
+        && data.recipientRole in ['user', 'supervisor', 'admin']
+        && data.recipientSupervisorId is string && data.recipientSupervisorId.size() <= 64
+        && data.recipientSupervisorUid is string && data.recipientSupervisorUid.size() <= 128
+        && isValidId(data.senderUid)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 400
+        && data.type in [
+          'leave_requested', 'leave_approved', 'leave_rejected', 'leave_cancelled',
+          'swap_requested', 'swap_peer_accepted', 'swap_peer_rejected',
+          'swap_approved', 'swap_rejected', 'admin_notice'
+        ]
+        && data.relatedId is string && data.relatedId.size() <= 128
+        && data.isRead is bool
+        && data.createdAt is timestamp;
+    }
+
+    // ====================
+    // Collection Rules
+    // ====================
+
+    // 1. Production Lines (Shared non-PII schedule metadata)
+    match /lines/{lineId} {
+      allow get: if isValidId(lineId) && isVerified();
+      allow list: if isMainAdmin() || (isVerified() && existing().isPublicSchedule == true);
+      allow create: if isValidId(lineId) && isMainAdmin() && isValidLine(incoming())
+        && incoming().id == lineId && incoming().updatedAt == request.time;
+      allow update: if isValidId(lineId) && isMainAdmin() && isValidLine(incoming())
+        && incoming().id == existing().id && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'maxLeaves', 'order', 'icon', 'updatedAt']);
+      allow delete: if isValidId(lineId) && isMainAdmin();
+    }
+
+    // 2. Workers (Non-PII workplace directory)
+    match /workers/{workerId} {
+      allow get: if isValidId(workerId) && isVerified();
+      allow list: if isMainAdmin() || (isVerified() && existing().isTeamDirectory == true);
+      allow create: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
+        && incoming().id == workerId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/lines/$(incoming().lineId))
+        && (
+          isMainAdmin()
+          || (canSupervisorManageTeam() && incoming().supervisorId == mySupervisorId())
+          || (incoming().claimedUid == request.auth.uid && incoming().supervisorId == 'main_admin')
+        );
+      allow update: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'lineId', 'supervisorId', 'supervisorName', 'supervisorUid', 'claimedUid', 'active', 'updatedAt'
+          ]))
+          || (isSupervisorOfWorker(workerId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'lineId', 'active', 'supervisorUid', 'updatedAt'
+          ]))
+          || (canSupervisorManageTeam() && existing().supervisorId == 'main_admin'
+            && incoming().supervisorId == mySupervisorId()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'supervisorId', 'supervisorName', 'supervisorUid', 'updatedAt'
+            ]))
+          || (existing().claimedUid == '' && incoming().claimedUid == request.auth.uid
+            && (!exists(/databases/$(database)/documents/worker_pii/$(workerId))
+                || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == ''
+                || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == verifiedEmail())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'updatedAt']))
+        );
+      allow delete: if isValidId(workerId) && isMainAdmin();
+    }
+
+    // 3. Worker PII (Strictly isolated emails)
+    match /worker_pii/{workerId} {
+      allow get: if isValidId(workerId) && isVerified() && (
+        isMainAdmin()
+        || existing().claimedUid == request.auth.uid
+        || existing().email == verifiedEmail()
+        || isSupervisorOfWorker(workerId)
+      );
+      allow list: if isVerified() && (
+        isMainAdmin()
+        || existing().claimedUid == request.auth.uid
+        || existing().email == verifiedEmail()
+      );
+      allow create: if isValidId(workerId) && isVerified() && isValidWorkerPii(incoming())
+        && incoming().workerId == workerId
+        && incoming().updatedAt == request.time
+        && (
+          isMainAdmin()
+          || (canSupervisorManageTeam() && incoming().supervisorId == mySupervisorId())
+        );
+      allow update: if isValidId(workerId) && isVerified() && isValidWorkerPii(incoming())
+        && incoming().workerId == existing().workerId
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'email', 'claimedUid', 'supervisorId', 'updatedAt'
+          ]))
+          || (isSupervisorOfWorker(workerId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'email', 'updatedAt'
+          ]))
+          || (existing().claimedUid == '' && existing().email == verifiedEmail()
+            && incoming().claimedUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'updatedAt']))
+        );
+      allow delete: if isValidId(workerId) && isMainAdmin();
+    }
+
+    // 4. User Profiles (PII Strictly owner or Main Admin)
+    match /user_profiles/{uid} {
+      allow get: if isValidId(uid) && isVerified() && (uid == request.auth.uid || isMainAdmin());
+      allow list: if isMainAdmin();
+      allow create: if isValidId(uid) && isVerified() && isValidUserProfile(incoming())
+        && uid == request.auth.uid
+        && incoming().uid == request.auth.uid
+        && incoming().email == verifiedEmail()
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(uid) && isVerified() && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (uid == request.auth.uid && incoming().email == existing().email
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'workerId', 'updatedAt']))
+          || (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'workerId', 'updatedAt']))
+        );
+      allow delete: if isValidId(uid) && isMainAdmin();
+    }
+
+    // 5. Supervisors (Sub-Admin definitions managed by Main Admin)
+    match /supervisors/{supervisorId} {
+      allow get: if isValidId(supervisorId) && isVerified() && (
+        isMainAdmin()
+        || existing().email == verifiedEmail()
+        || existing().uid == request.auth.uid
+      );
+      allow list: if isVerified() && (
+        isMainAdmin()
+        || existing().email == verifiedEmail()
+        || existing().uid == request.auth.uid
+      );
+      allow create: if isValidId(supervisorId) && isMainAdmin() && isValidSupervisor(incoming())
+        && incoming().id == supervisorId
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(supervisorId) && isVerified() && isValidSupervisor(incoming())
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'email', 'uid', 'active', 'canManageTeam', 'updatedAt'
+          ]))
+          || (existing().email == verifiedEmail() && existing().uid == ''
+            && incoming().uid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'updatedAt']))
+        );
+      allow delete: if isValidId(supervisorId) && isMainAdmin();
+    }
+
+    // 6. Supervisor Accounts (Verified UID -> supervisorId binding)
+    match /supervisor_accounts/{uid} {
+      allow get: if isValidId(uid) && isVerified() && (uid == request.auth.uid || isMainAdmin());
+      allow list: if isVerified() && (isMainAdmin() || existing().uid == request.auth.uid);
+      allow create: if isValidId(uid) && isVerified() && isValidSupervisorAccount(incoming())
+        && uid == request.auth.uid
+        && incoming().uid == request.auth.uid
+        && incoming().email == verifiedEmail()
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/supervisors/$(incoming().supervisorId))
+        && get(/databases/$(database)/documents/supervisors/$(incoming().supervisorId)).data.email == verifiedEmail()
+        && get(/databases/$(database)/documents/supervisors/$(incoming().supervisorId)).data.active == true;
+      allow update: if false;
+      allow delete: if isValidId(uid) && isMainAdmin();
+    }
+
+    // 7. Leaves (Approved schedule entries)
+    match /leaves/{leaveId} {
+      allow get: if isValidId(leaveId) && isVerified();
+      allow list: if isMainAdmin() || (isVerified() && existing().isPublicSchedule == true);
+      allow create: if isValidId(leaveId) && isVerified() && isValidLeaveEntry(incoming())
+        && incoming().id == leaveId
+        && incoming().approvedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/lines/$(incoming().lineId))
+        && existsAfter(/databases/$(database)/documents/workers/$(incoming().workerId))
+        && (isMainAdmin() || isSupervisorOfWorker(incoming().workerId));
+      allow update: if isValidId(leaveId) && isVerified() && isValidLeaveEntry(incoming())
+        && incoming().id == existing().id
+        && incoming().lineId == existing().lineId
+        && incoming().date == existing().date
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'workerId', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
+          ]))
+          || ((isSupervisorOfWorker(existing().workerId) || isSupervisorOfWorker(incoming().workerId))
+            && incoming().approvedByUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'workerId', 'workerName', 'workerUid', 'supervisorId', 'approvedByUid', 'source', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(leaveId) && isVerified() && (
+        isMainAdmin() || isSupervisorOfWorker(existing().workerId)
+      );
+    }
+
+    // 8. Leave Requests
+    match /leave_requests/{requestId} {
+      allow get: if isValidId(requestId) && isVerified() && (
+        isMainAdmin()
+        || existing().requesterUid == request.auth.uid
+        || existing().supervisorUid == request.auth.uid
+        || isSupervisorOfWorker(existing().workerId)
+      );
+      allow list: if isVerified() && (
+        isMainAdmin()
+        || existing().requesterUid == request.auth.uid
+        || existing().supervisorUid == request.auth.uid
+      );
+      allow create: if isValidId(requestId) && isVerified() && isValidLeaveRequest(incoming())
+        && incoming().id == requestId
+        && incoming().requesterUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().rejectionReason == ''
+        && incoming().reviewedByUid == ''
+        && incoming().reviewedByName == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/lines/$(incoming().lineId))
+        && exists(/databases/$(database)/documents/workers/$(incoming().workerId))
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.claimedUid == request.auth.uid
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.supervisorId == incoming().supervisorId;
+      allow update: if isValidId(requestId) && isVerified() && isValidLeaveRequest(incoming())
+        && incoming().id == existing().id
+        && incoming().requesterUid == existing().requesterUid
+        && incoming().workerId == existing().workerId
+        && incoming().lineId == existing().lineId
+        && incoming().date == existing().date
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'rejectionReason', 'reviewedByUid', 'reviewedByName',
+            'supervisorId', 'supervisorName', 'supervisorUid', 'updatedAt'
+          ]))
+          || (existing().requesterUid == request.auth.uid && existing().status == 'pending'
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          || (isSupervisorOfWorker(existing().workerId) && existing().status == 'pending'
+            && incoming().status in ['approved', 'rejected']
+            && incoming().reviewedByUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'rejectionReason', 'reviewedByUid', 'reviewedByName', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(requestId) && isMainAdmin();
+    }
+
+    // 9. Swap Requests
+    match /swap_requests/{swapId} {
+      allow get: if isValidId(swapId) && isVerified() && (
+        isMainAdmin()
+        || existing().fromUid == request.auth.uid
+        || existing().toUid == request.auth.uid
+        || existing().fromSupervisorUid == request.auth.uid
+        || existing().toSupervisorUid == request.auth.uid
+        || isSupervisorOfWorker(existing().fromWorkerId)
+        || isSupervisorOfWorker(existing().toWorkerId)
+      );
+      allow list: if isVerified() && (
+        isMainAdmin()
+        || existing().fromUid == request.auth.uid
+        || existing().toUid == request.auth.uid
+        || existing().fromSupervisorUid == request.auth.uid
+        || existing().toSupervisorUid == request.auth.uid
+      );
+      allow create: if isValidId(swapId) && isVerified() && isValidSwapRequest(incoming())
+        && incoming().id == swapId
+        && incoming().fromUid == request.auth.uid
+        && incoming().status == 'pending_peer'
+        && incoming().rejectionReason == ''
+        && incoming().reviewedByUid == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().fromWorkerId != incoming().toWorkerId
+        && exists(/databases/$(database)/documents/leaves/$(incoming().toLeaveId))
+        && get(/databases/$(database)/documents/leaves/$(incoming().toLeaveId)).data.workerId == incoming().toWorkerId
+        && (incoming().fromLeaveId == '' || (
+          isValidId(incoming().fromLeaveId)
+          && exists(/databases/$(database)/documents/leaves/$(incoming().fromLeaveId))
+          && get(/databases/$(database)/documents/leaves/$(incoming().fromLeaveId)).data.workerId == incoming().fromWorkerId
+        ))
+        && exists(/databases/$(database)/documents/workers/$(incoming().fromWorkerId))
+        && get(/databases/$(database)/documents/workers/$(incoming().fromWorkerId)).data.claimedUid == request.auth.uid;
+      allow update: if isValidId(swapId) && isVerified() && isValidSwapRequest(incoming())
+        && incoming().id == existing().id
+        && incoming().fromUid == existing().fromUid
+        && incoming().fromWorkerId == existing().fromWorkerId
+        && incoming().toWorkerId == existing().toWorkerId
+        && incoming().toLeaveId == existing().toLeaveId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'rejectionReason', 'reviewedByUid', 'toUid', 'fromSupervisorUid', 'toSupervisorUid', 'updatedAt'
+          ]))
+          || (existing().fromUid == request.auth.uid
+            && existing().status in ['pending_peer', 'pending_supervisor']
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          || (existing().toUid == request.auth.uid
+            && existing().status == 'pending_peer'
+            && incoming().status in ['pending_supervisor', 'rejected_by_peer']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'rejectionReason', 'updatedAt']))
+          || ((isSupervisorOfWorker(existing().fromWorkerId) || isSupervisorOfWorker(existing().toWorkerId))
+            && existing().status == 'pending_supervisor'
+            && incoming().status in ['approved', 'rejected_by_supervisor']
+            && incoming().reviewedByUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'rejectionReason', 'reviewedByUid', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(swapId) && isMainAdmin();
+    }
+
+    // 10. Notifications
+    match /notifications/{notifId} {
+      allow get: if isValidId(notifId) && isVerified() && (
+        (isMainAdmin() && existing().recipientRole == 'admin')
+        || (existing().recipientRole == 'user' && existing().recipientUid == request.auth.uid)
+        || (existing().recipientRole == 'supervisor' && existing().recipientSupervisorUid == request.auth.uid)
+      );
+      allow list: if isVerified() && (
+        (isMainAdmin() && existing().recipientRole == 'admin')
+        || (existing().recipientRole == 'user' && existing().recipientUid == request.auth.uid)
+        || (existing().recipientRole == 'supervisor' && existing().recipientSupervisorUid == request.auth.uid)
+      );
+      allow create: if isValidId(notifId) && isVerified() && isValidNotification(incoming())
+        && incoming().id == notifId
+        && incoming().senderUid == request.auth.uid
+        && incoming().isRead == false
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(notifId) && isVerified() && isValidNotification(incoming())
+        && incoming().id == existing().id
+        && incoming().senderUid == existing().senderUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead'])
+        && (
+          (isMainAdmin() && existing().recipientRole == 'admin')
+          || (existing().recipientRole == 'user' && existing().recipientUid == request.auth.uid)
+          || (existing().recipientRole == 'supervisor' && existing().recipientSupervisorUid == request.auth.uid)
+        );
+      allow delete: if isValidId(notifId) && isMainAdmin();
+    }
+  }
+}
