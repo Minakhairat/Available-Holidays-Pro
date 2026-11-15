@@ -496,7 +496,8 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/lines/$(incoming().lineId))
         && exists(/databases/$(database)/documents/workers/$(incoming().workerId))
         && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.claimedUid == request.auth.uid
-        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.supervisorId == incoming().supervisorId;
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.supervisorId == incoming().supervisorId
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.lineId == incoming().lineId;
       allow update: if isValidId(requestId) && isVerified() && isValidLeaveRequest(incoming())
         && incoming().id == existing().id
         && incoming().requesterUid == existing().requesterUid
@@ -552,13 +553,15 @@ service cloud.firestore {
         && incoming().fromWorkerId != incoming().toWorkerId
         && exists(/databases/$(database)/documents/leaves/$(incoming().toLeaveId))
         && get(/databases/$(database)/documents/leaves/$(incoming().toLeaveId)).data.workerId == incoming().toWorkerId
+        && get(/databases/$(database)/documents/leaves/$(incoming().toLeaveId)).data.lineId == incoming().lineId
         && (incoming().fromLeaveId == '' || (
           isValidId(incoming().fromLeaveId)
           && exists(/databases/$(database)/documents/leaves/$(incoming().fromLeaveId))
           && get(/databases/$(database)/documents/leaves/$(incoming().fromLeaveId)).data.workerId == incoming().fromWorkerId
         ))
         && exists(/databases/$(database)/documents/workers/$(incoming().fromWorkerId))
-        && get(/databases/$(database)/documents/workers/$(incoming().fromWorkerId)).data.claimedUid == request.auth.uid;
+        && get(/databases/$(database)/documents/workers/$(incoming().fromWorkerId)).data.claimedUid == request.auth.uid
+        && get(/databases/$(database)/documents/workers/$(incoming().fromWorkerId)).data.lineId == incoming().lineId;
       allow update: if isValidId(swapId) && isVerified() && isValidSwapRequest(incoming())
         && incoming().id == existing().id
         && incoming().fromUid == existing().fromUid

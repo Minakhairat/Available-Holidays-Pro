@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  AlertCircle,
   ArrowLeftRight,
   CalendarPlus,
   ChevronLeft,
@@ -66,6 +67,15 @@ export function MonthlyScheduleView({
   const activeLine = lines.find((l) => l.id === selectedLineId) || lines[0] || null;
   const todayISO = getTodayISO();
   const tomorrowISO = getTomorrowISO();
+  const myRegisteredLine = currentWorker
+    ? lines.find((l) => l.id === currentWorker.lineId) || null
+    : null;
+  const canActOnLine =
+    !activeLine ||
+    isMainAdmin ||
+    isSupervisor ||
+    !currentWorker ||
+    currentWorker.lineId === activeLine.id;
 
   const canManageLeave = (leave: LeaveEntry) => {
     if (isMainAdmin) return true;
@@ -150,6 +160,7 @@ export function MonthlyScheduleView({
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           {lines.map((line) => {
             const active = line.id === activeLine.id;
+            const isMyLine = currentWorker?.lineId === line.id;
             return (
               <button
                 key={line.id}
@@ -163,6 +174,7 @@ export function MonthlyScheduleView({
               >
                 <LineIcon icon={line.icon} className="w-4 h-4" />
                 <span>{line.name}</span>
+                {isMyLine && <span className="text-[10px] opacity-90">(خطك)</span>}
                 <span className="font-mono-num opacity-80">({line.maxLeaves})</span>
               </button>
             );
@@ -225,6 +237,25 @@ export function MonthlyScheduleView({
         </div>
       </section>
 
+      {!canActOnLine && myRegisteredLine && (
+        <section className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              أنت مسجل في <strong>{myRegisteredLine.name}</strong>. يمكنك متابعة جداول الخطوط
+              الأخرى للعرض فقط، ولا يمكنك طلب إجازة أو تبديل إلا في خطك المسجل.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectLineId(myRegisteredLine.id)}
+            className="px-3.5 py-2 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold whitespace-nowrap cursor-pointer self-start sm:self-center shrink-0"
+          >
+            الانتقال إلى خطي ({myRegisteredLine.name})
+          </button>
+        </section>
+      )}
+
       {/* Desktop & Tablet High-Density Table */}
       <section className="hidden md:block bg-white border border-neutral-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -281,7 +312,7 @@ export function MonthlyScheduleView({
                               {isMe ? ' (أنت)' : ''}
                             </span>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              {!isMe && day.iso >= todayISO && (
+                              {!isMe && canActOnLine && day.iso >= todayISO && (
                                 <button
                                   type="button"
                                   onClick={() => onRequestSwap(activeLine, leave)}
@@ -313,26 +344,30 @@ export function MonthlyScheduleView({
                       <div className="flex items-center gap-2">
                         {day.remaining > 0 ? (
                           day.iso >= todayISO ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => onRequestLeave(activeLine, day.iso)}
-                                className="px-3 py-1.5 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                              >
-                                <CalendarPlus className="w-3.5 h-3.5" />
-                                <span>طلب ({day.remaining})</span>
-                              </button>
-                              {(isMainAdmin || isSupervisor) && (
+                            canActOnLine ? (
+                              <>
                                 <button
                                   type="button"
-                                  onClick={() => onDirectAddForDate(activeLine, day.iso)}
-                                  title="تسجيل إجازة مباشرة لعامل"
-                                  className="p-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-700 cursor-pointer"
+                                  onClick={() => onRequestLeave(activeLine, day.iso)}
+                                  className="px-3 py-1.5 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
                                 >
-                                  <Plus className="w-3.5 h-3.5" />
+                                  <CalendarPlus className="w-3.5 h-3.5" />
+                                  <span>طلب ({day.remaining})</span>
                                 </button>
-                              )}
-                            </>
+                                {(isMainAdmin || isSupervisor) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDirectAddForDate(activeLine, day.iso)}
+                                    title="تسجيل إجازة مباشرة لعامل"
+                                    className="p-1.5 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-700 cursor-pointer"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs text-neutral-400">للعرض فقط</span>
+                            )
                           ) : (
                             <span className="text-xs text-neutral-400">تاريخ سابق</span>
                           )
@@ -398,7 +433,7 @@ export function MonthlyScheduleView({
                         {isMe ? ' (أنت)' : ''}
                       </span>
                       <div className="flex items-center gap-2">
-                        {!isMe && day.iso >= todayISO && (
+                        {!isMe && canActOnLine && day.iso >= todayISO && (
                           <button
                             type="button"
                             onClick={() => onRequestSwap(activeLine, leave)}
@@ -425,7 +460,7 @@ export function MonthlyScheduleView({
               )}
             </div>
 
-            {day.remaining > 0 && day.iso >= todayISO && (
+            {canActOnLine && day.remaining > 0 && day.iso >= todayISO && (
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"

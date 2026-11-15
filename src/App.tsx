@@ -243,8 +243,10 @@ function MainAppShell() {
         open={leaveModalState.open}
         onClose={() => setLeaveModalState({ open: false, line: null, date: '' })}
         line={leaveModalState.line}
+        lines={lines}
         date={leaveModalState.date}
         worker={currentWorker}
+        isAdminOrSupervisor={isMainAdmin || isSupervisor}
         requesterUid={user.uid}
         leaves={leaves}
         leaveRequests={leaveRequests}
@@ -256,8 +258,10 @@ function MainAppShell() {
         open={swapModalState.open}
         onClose={() => setSwapModalState({ open: false, line: null, leave: null })}
         line={swapModalState.line}
+        lines={lines}
         targetLeave={swapModalState.leave}
         currentWorker={currentWorker}
+        isAdminOrSupervisor={isMainAdmin || isSupervisor}
         currentUid={user.uid}
         workers={workers}
         leaves={leaves}

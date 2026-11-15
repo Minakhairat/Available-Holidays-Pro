@@ -8,8 +8,10 @@ interface SwapRequestModalProps {
   open: boolean;
   onClose: () => void;
   line: ProductionLine | null;
+  lines: ProductionLine[];
   targetLeave: LeaveEntry | null;
   currentWorker: Worker | null;
+  isAdminOrSupervisor: boolean;
   currentUid: string;
   workers: Worker[];
   leaves: LeaveEntry[];
@@ -21,8 +23,10 @@ export function SwapRequestModal({
   open,
   onClose,
   line,
+  lines,
   targetLeave,
   currentWorker,
+  isAdminOrSupervisor,
   currentUid,
   workers,
   leaves,
@@ -38,6 +42,12 @@ export function SwapRequestModal({
 
   const targetWorker = workers.find((w) => w.id === targetLeave.workerId) || null;
   const todayISO = getTodayISO();
+  const isWrongLine = Boolean(
+    currentWorker && !isAdminOrSupervisor && currentWorker.lineId !== line.id
+  );
+  const registeredLineName = currentWorker
+    ? lines.find((l) => l.id === currentWorker.lineId)?.name
+    : undefined;
 
   const myUpcomingLeavesOnLine = currentWorker
     ? leaves.filter(
@@ -54,6 +64,12 @@ export function SwapRequestModal({
     if (!currentWorker) {
       onClose();
       onNeedOnboarding();
+      return;
+    }
+    if (isWrongLine) {
+      setError(
+        `لا يمكنك طلب تبديل إجازة إلا في الخط المسجل به فقط${registeredLineName ? ` (${registeredLineName})` : ''}.`
+      );
       return;
     }
     if (!targetWorker) {
@@ -147,6 +163,17 @@ export function SwapRequestModal({
             </div>
           )}
 
+          {isWrongLine && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                عذراً، أنت مسجل في{' '}
+                <strong>{registeredLineName || 'خط آخر'}</strong> ولا يمكنك طلب تبديل إجازة في{' '}
+                <strong>{line.name}</strong>.
+              </span>
+            </div>
+          )}
+
           {targetWorker && !targetWorker.claimedUid && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -210,7 +237,11 @@ export function SwapRequestModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || Boolean(targetWorker && !targetWorker.claimedUid)}
+              disabled={
+                submitting ||
+                isWrongLine ||
+                Boolean(targetWorker && !targetWorker.claimedUid)
+              }
               className="flex-1 min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <ArrowLeftRight className="w-4 h-4" />

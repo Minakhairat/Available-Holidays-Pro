@@ -781,6 +781,38 @@ export async function updateLineQuota(lineId: string, maxLeaves: number): Promis
   }
 }
 
+export async function createProductionLine(params: {
+  name: string;
+  maxLeaves: number;
+  icon: string;
+  order: number;
+}): Promise<string> {
+  const { name, maxLeaves, icon, order } = params;
+  const lineId = `line_${Date.now().toString(36)}`.slice(0, 32);
+  try {
+    await setDoc(doc(db, 'lines', lineId), {
+      id: lineId,
+      name: trimStr(name, FIELD_LIMITS.LINE_NAME_MAX),
+      maxLeaves: Math.max(1, Math.min(20, Math.floor(maxLeaves))),
+      order: Math.max(0, Math.min(100, Math.floor(order))),
+      icon: trimStr(icon || 'factory', 40),
+      isPublicSchedule: true,
+      updatedAt: serverTimestamp(),
+    });
+    return lineId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `lines/${lineId}`);
+  }
+}
+
+export async function deleteProductionLine(lineId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'lines', lineId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `lines/${lineId}`);
+  }
+}
+
 export async function ensureLineExists(line: ProductionLine): Promise<void> {
   try {
     await setDoc(

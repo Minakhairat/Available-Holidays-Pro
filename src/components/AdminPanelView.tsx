@@ -4,6 +4,7 @@ import {
   CalendarPlus,
   Check,
   Download,
+  Plus,
   Search,
   Shield,
   Trash2,
@@ -29,8 +30,10 @@ import {
 } from '../lib/seedData';
 import {
   assignWorkerSupervisor,
+  createProductionLine,
   createSupervisor,
   createWorker,
+  deleteProductionLine,
   deleteSupervisorAndReassign,
   deleteWorkerByAdmin,
   directAddLeave,
@@ -41,6 +44,7 @@ import {
   updateSupervisorConfig,
   updateWorkerDetails,
 } from '../services/firestoreService';
+import { LineIcon } from './LineIcon';
 
 interface AdminPanelViewProps {
   lines: ProductionLine[];
@@ -100,6 +104,11 @@ export function AdminPanelView({
   const [supWorkerIds, setSupWorkerIds] = useState<string[]>([]);
   const [expandedSupId, setExpandedSupId] = useState<string | null>(null);
   const [syncingSheets, setSyncingSheets] = useState(false);
+
+  // New Production Line Form State (Main Admin Only)
+  const [newLineName, setNewLineName] = useState('');
+  const [newLineMax, setNewLineMax] = useState(2);
+  const [newLineIcon, setNewLineIcon] = useState('factory');
 
   const mySupId = supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
 
@@ -371,6 +380,69 @@ export function AdminPanelView({
       setErrorMsg(err instanceof Error ? err.message : 'تعذرت المزامنة من Google Sheets');
     } finally {
       setSyncingSheets(false);
+    }
+  };
+
+  const handleCreateLine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    const trimmed = newLineName.trim();
+    if (!trimmed) {
+      setErrorMsg('يرجى إدخال اسم خط الإنتاج الجديد.');
+      return;
+    }
+    if (lines.some((l) => l.name.trim().toLowerCase() === trimmed.toLowerCase())) {
+      setErrorMsg('يوجد خط إنتاج بنفس هذا الاسم بالفعل.');
+      return;
+    }
+    const clampedMax = Math.max(1, Math.min(20, Math.floor(newLineMax || 2)));
+    const nextOrder = Math.min(
+      100,
+      lines.reduce((maxOrd, l) => Math.max(maxOrd, l.order || 0), 0) + 1
+    );
+
+    setBusyId('create_line');
+    try {
+      await createProductionLine({
+        name: trimmed,
+        maxLeaves: clampedMax,
+        icon: newLineIcon || 'factory',
+        order: nextOrder,
+      });
+      setNewLineName('');
+      setNewLineMax(2);
+      setNewLineIcon('factory');
+      onSuccessToast(`تمت إضافة "${trimmed}" إلى خطوط الإنتاج بنجاح`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر إضافة خط الإنتاج');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDeleteLine = async (line: ProductionLine) => {
+    setErrorMsg(null);
+    if (lines.length <= 1) {
+      setErrorMsg('يجب أن يبقى خط إنتاج واحد على الأقل في النظام.');
+      return;
+    }
+    const hasWorkers = workers.some((w) => w.lineId === line.id);
+    const hasLeaves = leaves.some((l) => l.lineId === line.id);
+    if (hasWorkers || hasLeaves) {
+      setErrorMsg(
+        `لا يمكن حذف "${line.name}" لوجود عمال أو إجازات مسجلة عليه حالياً.`
+      );
+      return;
+    }
+
+    setBusyId(`delete_line_${line.id}`);
+    try {
+      await deleteProductionLine(line.id);
+      onSuccessToast(`تم حذف خط "${line.name}"`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر حذف الخط');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -1211,15 +1283,15 @@ export function AdminPanelView({
                 )}
               </section>
 
-              {/* Line Daily Quota Controls + Legacy Sheets Sync */}
-              <section className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4">
+              {/* Production Lines Management + Daily Quota Controls + Legacy Sheets Sync */}
+              <section className="bg-white border border-neutral-200 rounded-xl p-5 space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-neutral-900">
-                      حدود الإجازات اليومية ومزامنة الإكسيل القديم
+                      إدارة خطوط الإنتاج والحدود اليومية
                     </h2>
                     <p className="text-xs text-neutral-500 mt-0.5">
-                      يمكنك تعديل الحد اليومي لكل خط أو سحب أي بيانات جديدة من Google Sheets.
+                      أضف خطوط إنتاج جديدة أو عدّل الحد اليومي للإجازات أو زامن من Google Sheets.
                     </p>
                   </div>
                   <button
@@ -1235,17 +1307,86 @@ export function AdminPanelView({
                   </button>
                 </div>
 
+                {/* Add New Production Line Form */}
+                <form
+                  onSubmit={handleCreateLine}
+                  className="p-4 rounded-xl bg-neutral-50 border border-neutral-200 space-y-3"
+                >
+                  <div className="flex items-center gap-2 text-xs font-extrabold text-neutral-900">
+                    <Plus className="w-4 h-4 text-[#D32F2F]" />
+                    <span>إضافة خط إنتاج جديد</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                    <div className="sm:col-span-5">
+                      <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                        اسم الخط / القسم
+                      </label>
+                      <input
+                        type="text"
+                        value={newLineName}
+                        onChange={(e) => setNewLineName(e.target.value)}
+                        maxLength={80}
+                        placeholder="مثال: خط الإنتاج الخامس"
+                        className="w-full h-10 px-3 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                        الأيقونة
+                      </label>
+                      <select
+                        value={newLineIcon}
+                        onChange={(e) => setNewLineIcon(e.target.value)}
+                        className="w-full h-10 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                      >
+                        <option value="factory">مصنع / إنتاج</option>
+                        <option value="cpu">أجهزة / تجميع</option>
+                        <option value="settings">صيانة / ميكانيكا</option>
+                        <option value="layers">خامات / تغليف</option>
+                        <option value="printer">طباعة / تشطيب</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                        الحد اليومي
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={newLineMax}
+                        onChange={(e) => setNewLineMax(Number(e.target.value))}
+                        className="w-full h-10 px-2 rounded-lg border border-neutral-300 bg-white text-center text-xs font-mono-num font-bold focus:outline-none focus:border-[#D32F2F]"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <button
+                        type="submit"
+                        disabled={busyId === 'create_line'}
+                        className="w-full h-10 px-3 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>{busyId === 'create_line' ? 'جاري...' : 'إضافة'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                {/* Existing Lines Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {lines.map((line) => (
                     <div
                       key={line.id}
                       className="flex items-center justify-between gap-2 p-3 rounded-lg bg-neutral-50 border border-neutral-200"
                     >
-                      <span className="text-xs font-bold text-neutral-800">
-                        {line.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-neutral-500">الحد اليومي:</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <LineIcon icon={line.icon} className="w-4 h-4 text-[#D32F2F] shrink-0" />
+                        <span className="text-xs font-bold text-neutral-800 truncate">
+                          {line.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[11px] text-neutral-500">الحد:</span>
                         <input
                           type="number"
                           min={1}
@@ -1258,8 +1399,19 @@ export function AdminPanelView({
                               onSuccessToast(`تم تحديث حد ${line.name} إلى ${val}`);
                             }
                           }}
-                          className="w-16 h-8 px-2 rounded-md border border-neutral-300 bg-white text-center text-xs font-mono-num font-bold"
+                          className="w-14 h-8 px-1.5 rounded-md border border-neutral-300 bg-white text-center text-xs font-mono-num font-bold"
                         />
+                        {lines.length > 1 && (
+                          <button
+                            type="button"
+                            disabled={busyId === `delete_line_${line.id}`}
+                            onClick={() => handleDeleteLine(line)}
+                            title="حذف خط الإنتاج (إذا لم يكن مرتبطاً بعمال أو إجازات)"
+                            className="p-1.5 rounded-md border border-neutral-200 bg-white text-neutral-400 hover:text-[#D32F2F] hover:border-red-200 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}

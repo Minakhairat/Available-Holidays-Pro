@@ -13,8 +13,10 @@ interface LeaveRequestModalProps {
   open: boolean;
   onClose: () => void;
   line: ProductionLine | null;
+  lines: ProductionLine[];
   date: string;
   worker: Worker | null;
+  isAdminOrSupervisor: boolean;
   requesterUid: string;
   leaves: LeaveEntry[];
   leaveRequests: LeaveRequest[];
@@ -26,8 +28,10 @@ export function LeaveRequestModal({
   open,
   onClose,
   line,
+  lines,
   date,
   worker,
+  isAdminOrSupervisor,
   requesterUid,
   leaves,
   leaveRequests,
@@ -42,6 +46,10 @@ export function LeaveRequestModal({
 
   const dayLeaves = leaves.filter((l) => l.lineId === line.id && l.date === date);
   const remaining = Math.max(0, line.maxLeaves - dayLeaves.length);
+  const isWrongLine = Boolean(worker && !isAdminOrSupervisor && worker.lineId !== line.id);
+  const registeredLineName = worker
+    ? lines.find((l) => l.id === worker.lineId)?.name
+    : undefined;
 
   const monthKey = getMonthKey(date);
   const workerLeavesThisMonth = worker
@@ -64,6 +72,12 @@ export function LeaveRequestModal({
     if (!worker) {
       onClose();
       onNeedOnboarding();
+      return;
+    }
+    if (isWrongLine) {
+      setError(
+        `لا يمكنك طلب إجازة إلا في الخط المسجل به فقط${registeredLineName ? ` (${registeredLineName})` : ''}.`
+      );
       return;
     }
     if (remaining <= 0) {
@@ -177,6 +191,17 @@ export function LeaveRequestModal({
             </div>
           )}
 
+          {isWrongLine && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                عذراً، أنت مسجل في{' '}
+                <strong>{registeredLineName || 'خط آخر'}</strong> ولا يمكنك طلب إجازة في{' '}
+                <strong>{line.name}</strong>.
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
               {error}
@@ -207,7 +232,7 @@ export function LeaveRequestModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || remaining <= 0}
+              disabled={submitting || remaining <= 0 || isWrongLine}
               className="flex-1 min-h-[44px] py-2.5 px-4 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />

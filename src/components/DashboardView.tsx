@@ -66,6 +66,9 @@ export function DashboardView({
   const tomorrowISO = getTomorrowISO();
   const tomorrowDayName = getArabicDayName(tomorrowISO);
   const currentMonthKey = getMonthKey(tomorrowISO);
+  const myRegisteredLine = currentWorker
+    ? lines.find((l) => l.id === currentWorker.lineId) || null
+    : null;
 
   const lineSummaries = useMemo(() => {
     return lines.map((line) => {
@@ -297,6 +300,9 @@ export function DashboardView({
                     };
 
             const StatusIcon = statusConfig.Icon;
+            const isMyLine = Boolean(currentWorker && currentWorker.lineId === line.id);
+            const canActOnLine =
+              isMainAdmin || isSupervisor || !currentWorker || isMyLine;
 
             return (
               <article
@@ -316,6 +322,11 @@ export function DashboardView({
                         </h2>
                         <p className="text-xs text-neutral-500 font-mono-num">
                           {formatDisplayDate(tomorrowISO)} · {tomorrowDayName}
+                          {isMyLine && (
+                            <span className="font-sans font-bold text-[#D32F2F] mr-1">
+                              · خطك المسجل
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -360,7 +371,7 @@ export function DashboardView({
                                 {leave.workerName}
                                 {isMe ? ' (أنت)' : ''}
                               </span>
-                              {!isMe && (
+                              {!isMe && canActOnLine && (
                                 <button
                                   type="button"
                                   onClick={() => onRequestSwap(line, leave)}
@@ -379,27 +390,34 @@ export function DashboardView({
                 </div>
 
                 {/* Card Footer Actions */}
-                <div className="mt-5 pt-3.5 border-t border-neutral-100 flex items-center gap-2">
-                  {remaining > 0 && (
+                <div className="mt-5 pt-3.5 border-t border-neutral-100 space-y-2">
+                  {!canActOnLine && (
+                    <p className="text-[11px] text-neutral-500 text-center">
+                      مقيد للعرض فقط — يمكنك الطلب في {myRegisteredLine?.name || 'خطك المسجل'} فقط
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    {remaining > 0 && canActOnLine && (
+                      <button
+                        type="button"
+                        onClick={() => onRequestLeave(line, tomorrowISO)}
+                        className="flex-1 min-h-[42px] px-3 py-2 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                      >
+                        <CalendarPlus className="w-4 h-4 shrink-0" />
+                        <span>طلب إجازة لغد</span>
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => onRequestLeave(line, tomorrowISO)}
-                      className="flex-1 min-h-[42px] px-3 py-2 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                      onClick={() => onOpenMonthlyForLine(line.id)}
+                      className={`${
+                        remaining > 0 && canActOnLine ? 'flex-1' : 'w-full'
+                      } min-h-[42px] px-3 py-2 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap`}
                     >
-                      <CalendarPlus className="w-4 h-4 shrink-0" />
-                      <span>طلب إجازة لغد</span>
+                      <CalendarRange className="w-4 h-4 shrink-0 text-[#D32F2F]" />
+                      <span>جدول الشهر</span>
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onOpenMonthlyForLine(line.id)}
-                    className={`${
-                      remaining > 0 ? 'flex-1' : 'w-full'
-                    } min-h-[42px] px-3 py-2 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap`}
-                  >
-                    <CalendarRange className="w-4 h-4 shrink-0 text-[#D32F2F]" />
-                    <span>جدول الشهر</span>
-                  </button>
+                  </div>
                 </div>
               </article>
             );
