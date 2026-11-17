@@ -153,24 +153,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const piiSnap = await getDocs(
           query(collection(db, 'worker_pii'), where('email', '==', email))
         );
-        if (!piiSnap.empty) {
-          const piiDoc = piiSnap.docs[0];
-          const workerId = piiDoc.data().workerId as string;
-          const batch = writeBatch(db);
-          batch.update(doc(db, 'workers', workerId), {
-            claimedUid: firebaseUser.uid,
-            updatedAt: serverTimestamp(),
-          });
-          batch.update(piiDoc.ref, {
-            claimedUid: firebaseUser.uid,
-            updatedAt: serverTimestamp(),
-          });
-          batch.update(profileRef, {
-            workerId,
-            updatedAt: serverTimestamp(),
-          });
-          await batch.commit();
-          currentProfile = { ...currentProfile, workerId };
+        const unclaimedPiiDoc = piiSnap.docs.find((d) => !d.data().claimedUid);
+        if (unclaimedPiiDoc) {
+          const workerId = unclaimedPiiDoc.data().workerId as string;
+          const workerSnap = await getDoc(doc(db, 'workers', workerId));
+          if (workerSnap.exists() && !workerSnap.data().claimedUid) {
+            const batch = writeBatch(db);
+            batch.update(workerSnap.ref, {
+              claimedUid: firebaseUser.uid,
+              updatedAt: serverTimestamp(),
+            });
+            batch.update(unclaimedPiiDoc.ref, {
+              claimedUid: firebaseUser.uid,
+              updatedAt: serverTimestamp(),
+            });
+            batch.update(profileRef, {
+              workerId,
+              updatedAt: serverTimestamp(),
+            });
+            await batch.commit();
+            currentProfile = { ...currentProfile, workerId };
+          }
         }
       } catch (error) {
         console.error('Worker PII matching notice:', error);

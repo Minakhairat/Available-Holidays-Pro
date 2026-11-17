@@ -731,7 +731,10 @@
             "swap_peer_rejected",
             "swap_approved",
             "swap_rejected",
-            "admin_notice"
+            "admin_notice",
+            "worker_link_requested",
+            "worker_link_approved",
+            "worker_link_rejected"
           ],
           "description": "Notification event category."
         },
@@ -763,6 +766,114 @@
         "relatedId",
         "isRead",
         "createdAt"
+      ]
+    },
+    "WorkerLinkRequest": {
+      "title": "WorkerLinkRequest",
+      "description": "A user's request to link their verified Google account to an existing worker or register as a new worker, requiring Main Admin approval.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique worker link request ID."
+        },
+        "requestType": {
+          "type": "string",
+          "enum": ["claim", "create"],
+          "description": "Whether the user is claiming an existing worker or registering a new worker."
+        },
+        "requesterUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the requesting user."
+        },
+        "requesterEmail": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Verified lowercase Google email of the requesting user."
+        },
+        "requesterDisplayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Google account display name of the requesting user."
+        },
+        "targetWorkerId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Existing worker ID if requestType is claim, or newly created worker ID once approved, else empty string."
+        },
+        "requestedName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Worker name requested or selected."
+        },
+        "requestedEmployeeCode": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Worker employee code."
+        },
+        "requestedLineId": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Production line ID."
+        },
+        "requestedLineName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Production line Arabic name."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected", "cancelled"],
+          "description": "Approval workflow status."
+        },
+        "rejectionReason": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Rejection reason from Main Admin or empty string."
+        },
+        "reviewedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Main Admin UID who reviewed the request or empty string."
+        },
+        "reviewedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Main Admin display name or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "requestType",
+        "requesterUid",
+        "requesterEmail",
+        "requesterDisplayName",
+        "targetWorkerId",
+        "requestedName",
+        "requestedEmployeeCode",
+        "requestedLineId",
+        "requestedLineName",
+        "status",
+        "rejectionReason",
+        "reviewedByUid",
+        "reviewedByName",
+        "createdAt",
+        "updatedAt"
       ]
     }
   },
@@ -806,6 +917,10 @@
     "/notifications/{notifId}": {
       "schema": { "$ref": "#/entities/Notification" },
       "description": "Notifications for leave approvals, rejections, and swap updates."
+    },
+    "/worker_link_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/WorkerLinkRequest" },
+      "description": "Account-to-worker linking and registration requests requiring Main Admin approval."
     }
   }
 }

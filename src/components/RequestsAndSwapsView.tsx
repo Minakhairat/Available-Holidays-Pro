@@ -13,6 +13,7 @@ import {
   SwapRequest,
   SwapRequestStatus,
   Worker,
+  WorkerLinkRequest,
 } from '../types';
 import { formatDisplayDate, getArabicDayName } from '../lib/dateUtils';
 import {
@@ -24,6 +25,8 @@ import {
 interface RequestsAndSwapsViewProps {
   currentWorker: Worker | null;
   currentUid: string;
+  userEmail: string;
+  myPendingLinkRequest: WorkerLinkRequest | null;
   leaveRequests: LeaveRequest[];
   swapRequests: SwapRequest[];
   onOpenOnboarding: () => void;
@@ -63,6 +66,8 @@ function getSwapStatusLabel(status: SwapRequestStatus): { text: string; tone: st
 export function RequestsAndSwapsView({
   currentWorker,
   currentUid,
+  userEmail,
+  myPendingLinkRequest,
   leaveRequests,
   swapRequests,
   onOpenOnboarding,
@@ -126,18 +131,30 @@ export function RequestsAndSwapsView({
         <div className="bg-white border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-neutral-900">
-              ربط حسابك بملف عامل
+              {myPendingLinkRequest
+                ? `طلب ربط حسابك (${myPendingLinkRequest.requestedName}) قيد المراجعة`
+                : 'ربط حسابك بملف عامل'}
             </h2>
             <p className="text-xs text-neutral-600 mt-0.5">
-              لتتمكن من إرسال طلبات الإجازة والتبديل باسمك، اربط حسابك بملف العامل الخاص بك.
+              {myPendingLinkRequest ? (
+                <>
+                  بانتظار موافقة الحساب الرئيسي على مطابقة بريدك{' '}
+                  <span className="font-mono-num font-bold" dir="ltr">
+                    {userEmail}
+                  </span>
+                  .
+                </>
+              ) : (
+                'لتتمكن من إرسال طلبات الإجازة والتبديل باسمك، قدّم طلب ربط حسابك ليتم اعتماده من الحساب الرئيسي.'
+              )}
             </p>
           </div>
           <button
             onClick={onOpenOnboarding}
             className="px-4 py-2 rounded-lg bg-[#D32F2F] hover:bg-[#B71C1C] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer self-start sm:self-center whitespace-nowrap"
           >
-            <UserCheck className="w-4 h-4" />
-            <span>ربط الحساب الآن</span>
+            {myPendingLinkRequest ? <Clock className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+            <span>{myPendingLinkRequest ? 'عرض حالة الطلب' : 'طلب ربط الحساب'}</span>
           </button>
         </div>
       )}

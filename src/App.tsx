@@ -19,6 +19,7 @@ import {
   LeaveRequestStatus,
   ProductionLine,
   SwapRequestStatus,
+  WorkerLinkRequestStatus,
 } from './types';
 import { MAIN_ADMIN_SUPERVISOR_ID } from './lib/seedData';
 import { canSupervisorControlLine } from './lib/permissions';
@@ -30,6 +31,12 @@ function MainAppShell() {
     workers,
     leaves,
     supervisors,
+    workerPiiByWorkerId,
+    userProfiles,
+    userProfilesByUid,
+    workerLinkRequests,
+    myPendingLinkRequest,
+    myLatestLinkRequest,
     leaveRequests,
     swapRequests,
     notifications,
@@ -94,8 +101,19 @@ function MainAppShell() {
         s.toSupervisorId === mySupId
       );
     }).length;
-    return pendingLeaves + pendingSwaps;
-  }, [isMainAdmin, isSupervisor, supervisorRecord, leaveRequests, swapRequests, mySupId]);
+    const pendingLinks = isMainAdmin
+      ? workerLinkRequests.filter((r) => r.status === WorkerLinkRequestStatus.PENDING).length
+      : 0;
+    return pendingLeaves + pendingSwaps + pendingLinks;
+  }, [
+    isMainAdmin,
+    isSupervisor,
+    supervisorRecord,
+    leaveRequests,
+    swapRequests,
+    workerLinkRequests,
+    mySupId,
+  ]);
 
   if (!authReady) {
     return (
@@ -163,7 +181,12 @@ function MainAppShell() {
             leaves={leaves}
             workers={workers}
             leaveRequests={leaveRequests}
+            swapRequests={swapRequests}
+            workerLinkRequests={workerLinkRequests}
             currentWorker={currentWorker}
+            myPendingLinkRequest={myPendingLinkRequest}
+            myLatestLinkRequest={myLatestLinkRequest}
+            userEmail={user.email || ''}
             isMainAdmin={isMainAdmin}
             isSupervisor={isSupervisor}
             loading={loading}
@@ -212,6 +235,8 @@ function MainAppShell() {
           <RequestsAndSwapsView
             currentWorker={currentWorker}
             currentUid={user.uid}
+            userEmail={user.email || ''}
+            myPendingLinkRequest={myPendingLinkRequest}
             leaveRequests={leaveRequests}
             swapRequests={swapRequests}
             onOpenOnboarding={() => setOnboardingOpen(true)}
@@ -227,6 +252,10 @@ function MainAppShell() {
             supervisors={supervisors}
             leaveRequests={leaveRequests}
             swapRequests={swapRequests}
+            workerPiiByWorkerId={workerPiiByWorkerId}
+            userProfiles={userProfiles}
+            userProfilesByUid={userProfilesByUid}
+            workerLinkRequests={workerLinkRequests}
             isMainAdmin={isMainAdmin}
             isSupervisor={isSupervisor}
             supervisorRecord={supervisorRecord}
@@ -248,6 +277,9 @@ function MainAppShell() {
         onClose={() => setOnboardingOpen(false)}
         lines={lines}
         workers={workers}
+        myPendingLinkRequest={myPendingLinkRequest}
+        myLatestLinkRequest={myLatestLinkRequest}
+        onSuccessToast={showToast}
       />
 
       <LeaveRequestModal

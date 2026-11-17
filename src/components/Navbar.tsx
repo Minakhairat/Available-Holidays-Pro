@@ -105,8 +105,13 @@ export function Navbar({
               )}
             </button>
 
-            <div className="hidden sm:flex items-center gap-2 text-xs text-neutral-600 max-w-[160px] truncate">
+            <div className="hidden sm:flex flex-col items-end text-xs text-neutral-600 max-w-[190px] truncate">
               <span className="truncate font-semibold text-neutral-800">{displayIdentity}</span>
+              {user?.email && (
+                <span className="truncate text-[10px] font-mono-num text-neutral-500" dir="ltr">
+                  {user.email}
+                </span>
+              )}
             </div>
 
             <button

@@ -296,11 +296,43 @@ service cloud.firestore {
         && data.type in [
           'leave_requested', 'leave_approved', 'leave_rejected', 'leave_cancelled',
           'swap_requested', 'swap_peer_accepted', 'swap_peer_rejected',
-          'swap_approved', 'swap_rejected', 'admin_notice'
+          'swap_approved', 'swap_rejected', 'admin_notice',
+          'worker_link_requested', 'worker_link_approved', 'worker_link_rejected'
         ]
         && data.relatedId is string && data.relatedId.size() <= 128
         && data.isRead is bool
         && data.createdAt is timestamp;
+    }
+
+    function isValidWorkerLinkRequest(data) {
+      return data.keys().hasAll([
+          'id', 'requestType', 'requesterUid', 'requesterEmail', 'requesterDisplayName',
+          'targetWorkerId', 'requestedName', 'requestedEmployeeCode', 'requestedLineId',
+          'requestedLineName', 'status', 'rejectionReason', 'reviewedByUid', 'reviewedByName',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'requestType', 'requesterUid', 'requesterEmail', 'requesterDisplayName',
+          'targetWorkerId', 'requestedName', 'requestedEmployeeCode', 'requestedLineId',
+          'requestedLineName', 'status', 'rejectionReason', 'reviewedByUid', 'reviewedByName',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.requestType in ['claim', 'create']
+        && isValidId(data.requesterUid)
+        && data.requesterEmail is string && data.requesterEmail.size() >= 3 && data.requesterEmail.size() <= 160
+        && data.requesterDisplayName is string && data.requesterDisplayName.size() >= 1 && data.requesterDisplayName.size() <= 100
+        && data.targetWorkerId is string && data.targetWorkerId.size() <= 64
+        && data.requestedName is string && data.requestedName.size() >= 1 && data.requestedName.size() <= 100
+        && data.requestedEmployeeCode is string && data.requestedEmployeeCode.size() <= 32
+        && isValidId(data.requestedLineId) && data.requestedLineId.size() <= 32
+        && data.requestedLineName is string && data.requestedLineName.size() >= 1 && data.requestedLineName.size() <= 80
+        && data.status in ['pending', 'approved', 'rejected', 'cancelled']
+        && data.rejectionReason is string && data.rejectionReason.size() <= 300
+        && data.reviewedByUid is string && data.reviewedByUid.size() <= 128
+        && data.reviewedByName is string && data.reviewedByName.size() <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
     }
 
     // ====================
@@ -332,7 +364,6 @@ service cloud.firestore {
         && (
           isMainAdmin()
           || (isSupervisor() && incoming().supervisorId == mySupervisorId() && isSupervisorAllowedForLine(incoming().lineId))
-          || (incoming().claimedUid == request.auth.uid && incoming().supervisorId == 'main_admin')
         );
       allow update: if isValidId(workerId) && isVerified() && isValidWorker(incoming())
         && incoming().id == existing().id
@@ -359,9 +390,8 @@ service cloud.firestore {
             && ('employeeCode' in incoming()) && incoming().employeeCode.size() >= 1
             && incoming().diff(existing()).affectedKeys().hasOnly(['employeeCode', 'updatedAt']))
           || (existing().claimedUid == '' && incoming().claimedUid == request.auth.uid
-            && (!exists(/databases/$(database)/documents/worker_pii/$(workerId))
-                || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == ''
-                || get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == verifiedEmail())
+            && exists(/databases/$(database)/documents/worker_pii/$(workerId))
+            && get(/databases/$(database)/documents/worker_pii/$(workerId)).data.email == verifiedEmail()
             && (
               (('employeeCode' in existing()) && existing().employeeCode != ''
                 && incoming().diff(existing()).affectedKeys().hasOnly(['claimedUid', 'updatedAt']))
@@ -679,6 +709,55 @@ service cloud.firestore {
           || (existing().recipientRole == 'supervisor' && existing().recipientSupervisorUid == request.auth.uid)
         );
       allow delete: if isValidId(notifId) && isMainAdmin();
+    }
+
+    // 11. Worker Link Requests (Account-to-Worker Verification requiring Main Admin approval)
+    match /worker_link_requests/{requestId} {
+      allow get: if isValidId(requestId) && isVerified() && (
+        isMainAdmin()
+        || existing().requesterUid == request.auth.uid
+      );
+      allow list: if isVerified() && (
+        isMainAdmin()
+        || existing().requesterUid == request.auth.uid
+      );
+      allow create: if isValidId(requestId) && isVerified() && isValidWorkerLinkRequest(incoming())
+        && incoming().id == requestId
+        && incoming().requesterUid == request.auth.uid
+        && incoming().requesterEmail == verifiedEmail()
+        && incoming().status == 'pending'
+        && incoming().rejectionReason == ''
+        && incoming().reviewedByUid == ''
+        && incoming().reviewedByName == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/lines/$(incoming().requestedLineId))
+        && (
+          (incoming().requestType == 'create'
+            && incoming().targetWorkerId == ''
+            && incoming().requestedEmployeeCode.size() >= 1)
+          || (incoming().requestType == 'claim'
+            && isValidId(incoming().targetWorkerId)
+            && exists(/databases/$(database)/documents/workers/$(incoming().targetWorkerId)))
+        );
+      allow update: if isValidId(requestId) && isVerified() && isValidWorkerLinkRequest(incoming())
+        && incoming().id == existing().id
+        && incoming().requesterUid == existing().requesterUid
+        && incoming().requesterEmail == existing().requesterEmail
+        && incoming().requestType == existing().requestType
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isMainAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'rejectionReason', 'reviewedByUid', 'reviewedByName',
+            'targetWorkerId', 'requestedName', 'requestedEmployeeCode',
+            'requestedLineId', 'requestedLineName', 'updatedAt'
+          ]))
+          || (existing().requesterUid == request.auth.uid && existing().status == 'pending'
+            && incoming().status == 'cancelled'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isValidId(requestId) && isMainAdmin();
     }
   }
 }

@@ -17,7 +17,10 @@ import {
   LeaveRequest,
   LeaveRequestStatus,
   ProductionLine,
+  SwapRequest,
   Worker,
+  WorkerLinkRequest,
+  WorkerLinkRequestStatus,
 } from '../types';
 import {
   formatArabicLongDate,
@@ -28,13 +31,19 @@ import {
   getTomorrowISO,
 } from '../lib/dateUtils';
 import { LineIcon } from './LineIcon';
+import { DashboardSummaryCharts } from './DashboardSummaryCharts';
 
 interface DashboardViewProps {
   lines: ProductionLine[];
   leaves: LeaveEntry[];
   workers: Worker[];
   leaveRequests: LeaveRequest[];
+  swapRequests: SwapRequest[];
+  workerLinkRequests: WorkerLinkRequest[];
   currentWorker: Worker | null;
+  myPendingLinkRequest: WorkerLinkRequest | null;
+  myLatestLinkRequest: WorkerLinkRequest | null;
+  userEmail: string;
   isMainAdmin: boolean;
   isSupervisor: boolean;
   loading: boolean;
@@ -50,7 +59,12 @@ export function DashboardView({
   lines,
   leaves,
   leaveRequests,
+  swapRequests,
+  workerLinkRequests,
   currentWorker,
+  myPendingLinkRequest,
+  myLatestLinkRequest,
+  userEmail,
   isMainAdmin,
   isSupervisor,
   loading,
@@ -144,6 +158,18 @@ export function DashboardView({
                 </span>
               </span>
             </div>
+            {currentWorker && userEmail && (
+              <p className="mt-2 text-xs text-red-100">
+                الحساب المربوط:{' '}
+                <strong className="text-white">
+                  {currentWorker.name} ({currentWorker.employeeCode})
+                </strong>{' '}
+                ·{' '}
+                <span className="font-mono-num text-white/95" dir="ltr">
+                  {userEmail}
+                </span>
+              </p>
+            )}
           </div>
 
           {!currentWorker && !isMainAdmin && !isSupervisor && (
@@ -151,8 +177,21 @@ export function DashboardView({
               onClick={onOpenOnboarding}
               className="self-start lg:self-center px-4 py-2.5 bg-white text-[#D32F2F] hover:bg-red-50 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap min-h-[44px]"
             >
-              <UserCheck className="w-4 h-4" />
-              <span>ربط اسمك كعامل</span>
+              {myPendingLinkRequest ? (
+                <>
+                  <Clock className="w-4 h-4 text-amber-600" />
+                  <span>طلبك بانتظار موافقة الأدمن ({myPendingLinkRequest.requestedName})</span>
+                </>
+              ) : (
+                <>
+                  <UserCheck className="w-4 h-4" />
+                  <span>
+                    {myLatestLinkRequest?.status === WorkerLinkRequestStatus.REJECTED
+                      ? 'تم رفض الربط — إعادة الطلب'
+                      : 'ربط اسمك كعامل'}
+                  </span>
+                </>
+              )}
             </button>
           )}
         </div>
@@ -206,6 +245,16 @@ export function DashboardView({
           )}
         </div>
       </section>
+
+      {/* D3 Visual Overview Summary Charts */}
+      <DashboardSummaryCharts
+        lines={lines}
+        leaves={leaves}
+        leaveRequests={leaveRequests}
+        swapRequests={swapRequests}
+        workerLinkRequests={workerLinkRequests}
+        isMainAdmin={isMainAdmin}
+      />
 
       {/* Filter & Search Toolbar */}
       <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-neutral-200 rounded-xl p-3 sm:p-4">

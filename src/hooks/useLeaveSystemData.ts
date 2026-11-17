@@ -15,7 +15,11 @@ import {
   ProductionLine,
   Supervisor,
   SwapRequest,
+  UserProfile,
   Worker,
+  WorkerLinkRequest,
+  WorkerLinkRequestStatus,
+  WorkerPii,
 } from '../types';
 
 function sortByCreatedDesc<T extends { createdAt?: { toMillis?: () => number } }>(items: T[]): T[] {
@@ -27,12 +31,15 @@ function sortByCreatedDesc<T extends { createdAt?: { toMillis?: () => number } }
 }
 
 export function useLeaveSystemData() {
-  const { user, profile, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
+  const { user, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
 
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [leaves, setLeaves] = useState<LeaveEntry[]>([]);
   const [supervisors, setSupervisors] = useState<Supervisor[]>([]);
+  const [workerPiiList, setWorkerPiiList] = useState<WorkerPii[]>([]);
+  const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
+  const [workerLinkRequests, setWorkerLinkRequests] = useState<WorkerLinkRequest[]>([]);
 
   const [myLeaveReqs, setMyLeaveReqs] = useState<LeaveRequest[]>([]);
   const [supLeaveReqs, setSupLeaveReqs] = useState<LeaveRequest[]>([]);
@@ -260,7 +267,7 @@ export function useLeaveSystemData() {
       setSupNotifs([]);
     }
 
-    // 7. Supervisors list (Main Admin)
+    // 7. Supervisors, Worker PII, & User Profiles (Main Admin)
     if (isMainAdmin) {
       unsubs.push(
         onSnapshot(
@@ -269,8 +276,51 @@ export function useLeaveSystemData() {
           (err) => handleFirestoreError(err, OperationType.LIST, 'supervisors')
         )
       );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'worker_pii'),
+          (snap) => setWorkerPiiList(snap.docs.map((d) => d.data() as WorkerPii)),
+          (err) => handleFirestoreError(err, OperationType.LIST, 'worker_pii')
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'user_profiles'),
+          (snap) =>
+            setUserProfiles(sortByCreatedDesc(snap.docs.map((d) => d.data() as UserProfile))),
+          (err) => handleFirestoreError(err, OperationType.LIST, 'user_profiles')
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'worker_link_requests'),
+          (snap) =>
+            setWorkerLinkRequests(
+              sortByCreatedDesc(snap.docs.map((d) => d.data() as WorkerLinkRequest))
+            ),
+          (err) => handleFirestoreError(err, OperationType.LIST, 'worker_link_requests')
+        )
+      );
     } else {
       setSupervisors([]);
+      setUserProfiles([]);
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, 'worker_pii'), where('claimedUid', '==', user.uid)),
+          (snap) => setWorkerPiiList(snap.docs.map((d) => d.data() as WorkerPii)),
+          (err) => handleFirestoreError(err, OperationType.LIST, 'worker_pii')
+        )
+      );
+      unsubs.push(
+        onSnapshot(
+          query(collection(db, 'worker_link_requests'), where('requesterUid', '==', user.uid)),
+          (snap) =>
+            setWorkerLinkRequests(
+              sortByCreatedDesc(snap.docs.map((d) => d.data() as WorkerLinkRequest))
+            ),
+          (err) => handleFirestoreError(err, OperationType.LIST, 'worker_link_requests')
+        )
+      );
     }
 
     return () => {
@@ -304,20 +354,49 @@ export function useLeaveSystemData() {
     return sortByCreatedDesc(Array.from(map.values()));
   }, [userNotifs, adminNotifs, supNotifs]);
 
+  const workerPiiByWorkerId = useMemo(() => {
+    const map = new Map<string, WorkerPii>();
+    workerPiiList.forEach((p) => map.set(p.workerId, p));
+    return map;
+  }, [workerPiiList]);
+
+  const userProfilesByUid = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    userProfiles.forEach((u) => map.set(u.uid, u));
+    return map;
+  }, [userProfiles]);
+
   const currentWorker = useMemo(() => {
     if (!user) return null;
-    if (profile?.workerId) {
-      const byId = workers.find((w) => w.id === profile.workerId);
-      if (byId) return byId;
-    }
     return workers.find((w) => w.claimedUid === user.uid) || null;
-  }, [user, profile, workers]);
+  }, [user, workers]);
+
+  const myPendingLinkRequest = useMemo(() => {
+    if (!user) return null;
+    return (
+      workerLinkRequests.find(
+        (r) => r.requesterUid === user.uid && r.status === WorkerLinkRequestStatus.PENDING
+      ) || null
+    );
+  }, [user, workerLinkRequests]);
+
+  const myLatestLinkRequest = useMemo(() => {
+    if (!user) return null;
+    return workerLinkRequests.find((r) => r.requesterUid === user.uid) || null;
+  }, [user, workerLinkRequests]);
 
   return {
     lines,
     workers,
     leaves,
     supervisors,
+    workerPiiList,
+    workerPiiByWorkerId,
+    userProfiles,
+    userProfilesByUid,
+    workerLinkRequests,
+    myPendingLinkRequest,
+    myLatestLinkRequest,
     leaveRequests,
     swapRequests,
     notifications,

@@ -8,6 +8,7 @@
 5. **Terminal State Locking**: Once a `leave_request` reaches `approved`, `rejected`, or `cancelled`, or a `swap_request` reaches `approved`, `rejected_by_peer`, `rejected_by_supervisor`, or `cancelled`, non-admins cannot mutate it.
 6. **Temporal Integrity**: All `createdAt` and `updatedAt` fields must strictly equal `request.time`.
 7. **ID & Size Hardening**: All document IDs match `^[a-zA-Z0-9_\-]+$` (<= 128 chars) and every string field enforces explicit `.size()` bounds.
+8. **Account-to-Worker Verification Gate**: Regular users cannot directly self-create `/workers` documents or claim an existing worker without either a matching pre-registered `/worker_pii/{workerId}.email == verifiedEmail()` or an explicit Main Admin approval of a `/worker_link_requests/{requestId}` document.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 1. **Unverified Email Spoof**: User with `email: "minakhairat1@gmail.com"` and `email_verified: false` tries to create a supervisor -> `PERMISSION_DENIED`.
@@ -22,3 +23,5 @@
 10. **Supervisor Account Forgery**: Regular worker tries to create `/supervisor_accounts/{uid}` pointing to an existing supervisor whose email does not match `request.auth.token.email` -> `PERMISSION_DENIED`.
 11. **Resource Exhaustion / Oversized Payload**: Worker tries to submit a `leave_requests` doc with a 5,000-character `reason` string or oversized ID -> `PERMISSION_DENIED`.
 12. **Timestamp Tampering**: User tries to backdate `createdAt` to a past timestamp instead of `request.time` -> `PERMISSION_DENIED`.
+13. **Unauthorized Direct Worker Claim / Impersonation**: Unlinked user tries to directly update `workers/{workerId}.claimedUid` when their email is not pre-registered in `worker_pii/{workerId}` -> `PERMISSION_DENIED`.
+14. **Worker Link Request Self-Approval**: Regular user tries to create or update `worker_link_requests/{requestId}` with `status: "approved"` or spoofed `requesterEmail` -> `PERMISSION_DENIED`.

@@ -4,10 +4,13 @@ import {
   CalendarPlus,
   Check,
   Download,
+  Link2,
+  Mail,
   Pencil,
   Plus,
   Search,
   Shield,
+  ShieldCheck,
   Trash2,
   UserPlus,
   Users,
@@ -22,7 +25,11 @@ import {
   Supervisor,
   SwapRequest,
   SwapRequestStatus,
+  UserProfile,
   Worker,
+  WorkerLinkRequest,
+  WorkerLinkRequestStatus,
+  WorkerPii,
 } from '../types';
 import { formatDisplayDate, getArabicDayName, getTomorrowISO } from '../lib/dateUtils';
 import {
@@ -40,14 +47,17 @@ import {
   deleteWorkerByAdmin,
   directAddLeave,
   directCancelLeave,
+  linkAccountToWorkerByMainAdmin,
   reviewLeaveRequest,
   reviewSwapAsSupervisor,
+  reviewWorkerLinkRequest,
   updateLineQuota,
   updateProductionLine,
   updateSupervisorAllowedLines,
   updateSupervisorConfig,
   updateSupervisorDetails,
   updateWorkerDetails,
+  updateWorkerFullByMainAdmin,
 } from '../services/firestoreService';
 import {
   canSupervisorControlLine,
@@ -64,6 +74,10 @@ interface AdminPanelViewProps {
   supervisors: Supervisor[];
   leaveRequests: LeaveRequest[];
   swapRequests: SwapRequest[];
+  workerPiiByWorkerId: Map<string, WorkerPii>;
+  userProfiles: UserProfile[];
+  userProfilesByUid: Map<string, UserProfile>;
+  workerLinkRequests: WorkerLinkRequest[];
   isMainAdmin: boolean;
   isSupervisor: boolean;
   supervisorRecord: Supervisor | null;
@@ -81,6 +95,10 @@ export function AdminPanelView({
   supervisors,
   leaveRequests,
   swapRequests,
+  workerPiiByWorkerId,
+  userProfiles,
+  userProfilesByUid,
+  workerLinkRequests,
   isMainAdmin,
   supervisorRecord,
   actorUid,
@@ -90,6 +108,9 @@ export function AdminPanelView({
   const [tab, setTab] = useState<AdminTab>('approvals');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [linkEdits, setLinkEdits] = useState<
+    Record<string, { name: string; code: string; lineId: string; supId: string }>
+  >({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Direct Leave Form State
@@ -109,6 +130,7 @@ export function AdminPanelView({
     isMainAdmin ? MAIN_ADMIN_SUPERVISOR_ID : supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID
   );
   const [workerSearch, setWorkerSearch] = useState('');
+  const [accountSearch, setAccountSearch] = useState('');
 
   // Inline Worker Edit State
   const [editingWorkerId, setEditingWorkerId] = useState<string | null>(null);
@@ -116,6 +138,9 @@ export function AdminPanelView({
   const [editWorkerName, setEditWorkerName] = useState('');
   const [editWorkerLineId, setEditWorkerLineId] = useState('');
   const [editWorkerActive, setEditWorkerActive] = useState(true);
+  const [editWorkerEmail, setEditWorkerEmail] = useState('');
+  const [editWorkerSupId, setEditWorkerSupId] = useState(MAIN_ADMIN_SUPERVISOR_ID);
+  const [editWorkerLinkedUid, setEditWorkerLinkedUid] = useState('');
 
   // Sub-Admin Form State
   const [supName, setSupName] = useState('');
@@ -198,7 +223,21 @@ export function AdminPanelView({
     });
   }, [swapRequests, isMainAdmin, supervisorRecord, mySupId]);
 
-  const totalPending = pendingLeaveReqs.length + pendingSwapReqs.length;
+  const pendingLinkReqs = useMemo(() => {
+    if (!isMainAdmin) return [];
+    return workerLinkRequests.filter((r) => r.status === WorkerLinkRequestStatus.PENDING);
+  }, [isMainAdmin, workerLinkRequests]);
+
+  const totalPending =
+    pendingLeaveReqs.length + pendingSwapReqs.length + pendingLinkReqs.length;
+
+  const resolveWorkerEmail = (w: Worker): string => {
+    return (
+      workerPiiByWorkerId.get(w.id)?.email ||
+      (w.claimedUid ? userProfilesByUid.get(w.claimedUid)?.email : '') ||
+      ''
+    );
+  };
 
   const leaveFilterLines = useMemo(() => {
     if (isMainAdmin) return lines;
@@ -306,6 +345,83 @@ export function AdminPanelView({
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'حدث خطأ أثناء معالجة التبديل');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const getLinkEditValues = (req: WorkerLinkRequest) => {
+    const existingTarget = req.targetWorkerId
+      ? workers.find((w) => w.id === req.targetWorkerId)
+      : undefined;
+    const saved = linkEdits[req.id];
+    return {
+      name: saved?.name ?? req.requestedName,
+      code: saved?.code ?? (req.requestedEmployeeCode || existingTarget?.employeeCode || ''),
+      lineId: saved?.lineId ?? req.requestedLineId,
+      supId:
+        saved?.supId ?? (existingTarget?.supervisorId || MAIN_ADMIN_SUPERVISOR_ID),
+    };
+  };
+
+  const handleReviewWorkerLink = async (
+    req: WorkerLinkRequest,
+    decision: 'approved' | 'rejected'
+  ) => {
+    setErrorMsg(null);
+    const vals = getLinkEditValues(req);
+    const cleanName = vals.name.trim();
+    const cleanCode = vals.code.trim();
+    const editedLine = lines.find((l) => l.id === vals.lineId) || lines[0];
+
+    if (decision === 'approved') {
+      if (!cleanName) {
+        setErrorMsg('يرجى إدخال اسم العامل قبل الموافقة.');
+        return;
+      }
+      if (!cleanCode) {
+        setErrorMsg('كود العامل إجباري قبل الموافقة على ربط الحساب.');
+        return;
+      }
+      const duplicateWorker = workers.find(
+        (w) =>
+          w.id !== req.targetWorkerId &&
+          (w.employeeCode || '').trim().toLowerCase() === cleanCode.toLowerCase()
+      );
+      if (duplicateWorker) {
+        setErrorMsg(`الكود "${cleanCode}" مسجل بالفعل للعامل ${duplicateWorker.name}.`);
+        return;
+      }
+    }
+
+    const chosenSup = supervisors.find((s) => s.id === vals.supId);
+    const supId = chosenSup?.id || MAIN_ADMIN_SUPERVISOR_ID;
+    const supName = chosenSup?.name || MAIN_ADMIN_SUPERVISOR_NAME;
+    const supUid = supId === MAIN_ADMIN_SUPERVISOR_ID ? actorUid : chosenSup?.uid || '';
+
+    setBusyId(`wlr_${req.id}`);
+    try {
+      await reviewWorkerLinkRequest({
+        request: req,
+        decision,
+        reviewerUid: actorUid,
+        reviewerName: actorName,
+        rejectionReason: rejectReasons[req.id] || '',
+        editedName: cleanName,
+        editedEmployeeCode: cleanCode,
+        editedLine,
+        supervisorId: supId,
+        supervisorName: supName,
+        supervisorUid: supUid,
+        allWorkers: workers,
+      });
+      onSuccessToast(
+        decision === 'approved'
+          ? `تمت الموافقة على ربط ${req.requesterEmail} بالعامل ${cleanName}`
+          : `تم رفض طلب الربط من ${req.requesterEmail}`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر معالجة طلب ربط الحساب');
     } finally {
       setBusyId(null);
     }
@@ -450,6 +566,9 @@ export function AdminPanelView({
     setEditWorkerName(w.name);
     setEditWorkerLineId(w.lineId);
     setEditWorkerActive(w.active);
+    setEditWorkerEmail(resolveWorkerEmail(w));
+    setEditWorkerSupId(w.supervisorId || MAIN_ADMIN_SUPERVISOR_ID);
+    setEditWorkerLinkedUid(w.claimedUid || '');
   };
 
   const handleSaveWorkerEdit = async (worker: Worker) => {
@@ -477,17 +596,67 @@ export function AdminPanelView({
 
     setBusyId(`edit_worker_${worker.id}`);
     try {
-      await updateWorkerDetails({
-        workerId: worker.id,
-        employeeCode: trimmedCode,
-        name: trimmedName,
-        lineId: editWorkerLineId || worker.lineId,
-        active: editWorkerActive,
-      });
+      if (isMainAdmin) {
+        const chosenSup = supervisors.find((s) => s.id === editWorkerSupId);
+        const supId = chosenSup?.id || MAIN_ADMIN_SUPERVISOR_ID;
+        const supName = chosenSup?.name || MAIN_ADMIN_SUPERVISOR_NAME;
+        const supUid =
+          supId === MAIN_ADMIN_SUPERVISOR_ID ? actorUid : chosenSup?.uid || '';
+
+        await updateWorkerFullByMainAdmin({
+          worker,
+          employeeCode: trimmedCode,
+          name: trimmedName,
+          lineId: editWorkerLineId || worker.lineId,
+          supervisorId: supId,
+          supervisorName: supName,
+          supervisorUid: supUid,
+          active: editWorkerActive,
+          email: editWorkerEmail,
+          newLinkedUid: editWorkerLinkedUid,
+          allWorkers: workers,
+          allProfiles: userProfiles,
+        });
+      } else {
+        await updateWorkerDetails({
+          workerId: worker.id,
+          employeeCode: trimmedCode,
+          name: trimmedName,
+          lineId: editWorkerLineId || worker.lineId,
+          active: editWorkerActive,
+        });
+      }
       setEditingWorkerId(null);
       onSuccessToast(`تم تحديث بيانات ${trimmedName}`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث بيانات العامل');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleLinkAccountToWorker = async (
+    profile: UserProfile,
+    targetWorkerId: string
+  ) => {
+    setErrorMsg(null);
+    const targetWorker = targetWorkerId
+      ? workers.find((w) => w.id === targetWorkerId) || null
+      : null;
+    setBusyId(`link_acc_${profile.uid}`);
+    try {
+      await linkAccountToWorkerByMainAdmin({
+        profile,
+        targetWorker,
+        allWorkers: workers,
+      });
+      onSuccessToast(
+        targetWorker
+          ? `تم ربط الحساب (${profile.email}) بالعامل ${targetWorker.name}`
+          : `تم فك ربط الحساب (${profile.email})`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذر تحديث ربط الحساب');
     } finally {
       setBusyId(null);
     }
@@ -761,10 +930,24 @@ export function AdminPanelView({
     const q = workerSearch.trim().toLowerCase();
     if (!q) return true;
     const lineName = lines.find((l) => l.id === w.lineId)?.name || '';
+    const workerEmail = resolveWorkerEmail(w);
     return (
       w.name.toLowerCase().includes(q) ||
       (w.employeeCode || '').toLowerCase().includes(q) ||
-      lineName.toLowerCase().includes(q)
+      lineName.toLowerCase().includes(q) ||
+      workerEmail.toLowerCase().includes(q)
+    );
+  });
+
+  const displayedAccounts = userProfiles.filter((p) => {
+    const q = accountSearch.trim().toLowerCase();
+    if (!q) return true;
+    const linkedW = workers.find((w) => w.claimedUid === p.uid || w.id === p.workerId);
+    return (
+      p.email.toLowerCase().includes(q) ||
+      p.displayName.toLowerCase().includes(q) ||
+      (linkedW?.name || '').toLowerCase().includes(q) ||
+      (linkedW?.employeeCode || '').toLowerCase().includes(q)
     );
   });
 
@@ -822,7 +1005,215 @@ export function AdminPanelView({
 
       {/* TAB 1: Approvals */}
       {tab === 'approvals' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="space-y-5">
+          {isMainAdmin && (
+            <section className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-[#D32F2F]" />
+                  <div>
+                    <h2 className="text-base font-extrabold text-neutral-900">
+                      طلبات توثيق وربط حسابات العمال ({pendingLinkReqs.length})
+                    </h2>
+                    <p className="text-xs text-neutral-500">
+                      راجع البريد الإلكتروني الموثق لكل متقدم وطابقه مع بيانات الموظف قبل الموافقة على الربط.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {pendingLinkReqs.length === 0 ? (
+                <div className="p-6 text-center text-xs text-neutral-500">
+                  لا توجد طلبات ربط حسابات بانتظار المراجعة حالياً.
+                </div>
+              ) : (
+                <div className="divide-y divide-neutral-100">
+                  {pendingLinkReqs.map((req) => {
+                    const vals = getLinkEditValues(req);
+                    const targetWorker = req.targetWorkerId
+                      ? workers.find((w) => w.id === req.targetWorkerId) || null
+                      : null;
+                    const preRegisteredEmail = targetWorker
+                      ? workerPiiByWorkerId.get(targetWorker.id)?.email || ''
+                      : '';
+                    const emailsMatch =
+                      Boolean(preRegisteredEmail) &&
+                      preRegisteredEmail.toLowerCase() === req.requesterEmail.toLowerCase();
+                    const emailsMismatch =
+                      Boolean(preRegisteredEmail) &&
+                      preRegisteredEmail.toLowerCase() !== req.requesterEmail.toLowerCase();
+
+                    return (
+                      <div key={req.id} className="p-4 sm:p-5 space-y-3.5">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${
+                                  req.requestType === 'claim'
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                }`}
+                              >
+                                {req.requestType === 'claim'
+                                  ? 'طلب ربط باسم مسجل'
+                                  : 'طلب تسجيل عامل جديد'}
+                              </span>
+                              <span className="text-xs font-bold text-neutral-800">
+                                اسم حساب Google: {req.requesterDisplayName}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="inline-flex items-center gap-1.5 font-mono-num font-bold text-[#D32F2F] bg-red-50 border border-red-200 px-2.5 py-1 rounded-md">
+                                <Mail className="w-3.5 h-3.5 shrink-0" />
+                                <span dir="ltr">{req.requesterEmail}</span>
+                              </span>
+                              {emailsMatch && (
+                                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                  مطابق للإيميل المسجل مسبقاً
+                                </span>
+                              )}
+                              {emailsMismatch && (
+                                <span className="text-[11px] font-bold text-[#D32F2F] bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">
+                                  تنبيه: يختلف عن الإيميل المسجل ({preRegisteredEmail})
+                                </span>
+                              )}
+                              {req.requestType === 'claim' && !preRegisteredEmail && (
+                                <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                                  لا يوجد إيميل مسجل مسبقاً لهذا العامل — تحقق من الاسم قبل القبول
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Editable Worker Details Before Approval */}
+                        <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                          <div className="sm:col-span-4">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              اسم العامل *
+                            </label>
+                            <input
+                              type="text"
+                              value={vals.name}
+                              onChange={(e) =>
+                                setLinkEdits((prev) => ({
+                                  ...prev,
+                                  [req.id]: { ...vals, name: e.target.value },
+                                }))
+                              }
+                              maxLength={FIELD_LIMITS.NAME_MAX}
+                              className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              كود العامل *
+                            </label>
+                            <input
+                              type="text"
+                              value={vals.code}
+                              onChange={(e) =>
+                                setLinkEdits((prev) => ({
+                                  ...prev,
+                                  [req.id]: { ...vals, code: e.target.value },
+                                }))
+                              }
+                              maxLength={FIELD_LIMITS.CODE_MAX}
+                              dir="ltr"
+                              className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white font-mono-num text-xs focus:outline-none focus:border-[#D32F2F]"
+                            />
+                          </div>
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              خط الإنتاج
+                            </label>
+                            <select
+                              value={vals.lineId}
+                              onChange={(e) =>
+                                setLinkEdits((prev) => ({
+                                  ...prev,
+                                  [req.id]: { ...vals, lineId: e.target.value },
+                                }))
+                              }
+                              className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                            >
+                              {lines.map((l) => (
+                                <option key={l.id} value={l.id}>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="sm:col-span-3">
+                            <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                              المشرف المسؤول
+                            </label>
+                            <select
+                              value={vals.supId}
+                              onChange={(e) =>
+                                setLinkEdits((prev) => ({
+                                  ...prev,
+                                  [req.id]: { ...vals, supId: e.target.value },
+                                }))
+                              }
+                              className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                            >
+                              <option value={MAIN_ADMIN_SUPERVISOR_ID}>
+                                {MAIN_ADMIN_SUPERVISOR_NAME}
+                              </option>
+                              {supervisors.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <input
+                          type="text"
+                          value={rejectReasons[req.id] || ''}
+                          onChange={(e) =>
+                            setRejectReasons((prev) => ({
+                              ...prev,
+                              [req.id]: e.target.value,
+                            }))
+                          }
+                          maxLength={300}
+                          placeholder="سبب الرفض في حال عدم مطابقة الاسم أو الإيميل (اختياري)..."
+                          className="w-full h-9 px-3 rounded-lg border border-neutral-200 text-xs focus:outline-none focus:border-[#D32F2F]"
+                        />
+
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={busyId === `wlr_${req.id}`}
+                            onClick={() => handleReviewWorkerLink(req, 'approved')}
+                            className="flex-1 min-h-[40px] px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>موافقة وتوثيق الربط</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === `wlr_${req.id}`}
+                            onClick={() => handleReviewWorkerLink(req, 'rejected')}
+                            className="flex-1 min-h-[40px] px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-[#D32F2F] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            <X className="w-4 h-4" />
+                            <span>رفض الطلب</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Pending Leave Requests */}
           <section className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between">
@@ -985,6 +1376,7 @@ export function AdminPanelView({
               </div>
             )}
           </section>
+          </div>
         </div>
       )}
 
@@ -1368,21 +1760,25 @@ export function AdminPanelView({
                     type="text"
                     value={workerSearch}
                     onChange={(e) => setWorkerSearch(e.target.value)}
-                    placeholder="بحث بالاسم أو الكود أو الخط..."
-                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-60"
+                    placeholder="بحث بالاسم أو الكود أو الإيميل..."
+                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-64"
                   />
                 </div>
               </div>
 
-              <div className="divide-y divide-neutral-100 max-h-[560px] overflow-y-auto">
+              <div className="divide-y divide-neutral-100 max-h-[600px] overflow-y-auto">
                 {displayedWorkers.map((w) => {
                   const isEditing = editingWorkerId === w.id;
                   const lineName = lines.find((l) => l.id === w.lineId)?.name || w.lineId;
+                  const workerEmail = resolveWorkerEmail(w);
+                  const linkedProfile = w.claimedUid
+                    ? userProfilesByUid.get(w.claimedUid) || null
+                    : null;
 
                   return (
                     <div key={w.id} className="p-4 space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="min-w-0">
+                        <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-bold text-neutral-900">
                               {w.name}
@@ -1394,19 +1790,48 @@ export function AdminPanelView({
                             >
                               · كود: {w.employeeCode || 'غير مسجل'}
                             </span>
-                            <span className="text-[11px] font-semibold text-neutral-500">
-                              · {w.claimedUid ? 'حساب مرتبط' : 'مسجل يدوياً'}
-                            </span>
+                            {w.claimedUid ? (
+                              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                حساب موثّق ومربوط
+                              </span>
+                            ) : workerEmail ? (
+                              <span className="text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                                بريد مسجل (بانتظار الدخول)
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-neutral-500">
+                                · مسجل يدوياً
+                              </span>
+                            )}
                             {!w.active && (
                               <span className="text-[11px] font-bold text-neutral-400">
                                 · موقوف
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-neutral-500 mt-0.5">
+                          <p className="text-xs text-neutral-500">
                             الخط: <strong className="text-neutral-700">{lineName}</strong> · المشرف:{' '}
                             <strong className="text-neutral-800">{w.supervisorName}</strong>
                           </p>
+                          {workerEmail ? (
+                            <div className="flex flex-wrap items-center gap-1.5 text-xs text-neutral-700">
+                              <Mail className="w-3.5 h-3.5 text-[#D32F2F] shrink-0" />
+                              <span className="font-mono-num font-semibold" dir="ltr">
+                                {workerEmail}
+                              </span>
+                              {linkedProfile?.displayName && (
+                                <span className="text-[11px] text-neutral-500">
+                                  ({linkedProfile.displayName})
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            isMainAdmin && (
+                              <p className="text-[11px] text-neutral-400">
+                                لا يوجد إيميل مربوط بهذا العامل بعد
+                              </p>
+                            )
+                          )}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
@@ -1488,7 +1913,7 @@ export function AdminPanelView({
                             <button
                               type="button"
                               onClick={async () => {
-                                await deleteWorkerByAdmin(w.id);
+                                await deleteWorkerByAdmin(w);
                                 onSuccessToast(`تم حذف ${w.name}`);
                               }}
                               title="حذف العامل"
@@ -1560,6 +1985,75 @@ export function AdminPanelView({
                               <span>نشط</span>
                             </label>
                           </div>
+
+                          {isMainAdmin && (
+                            <>
+                              <div className="sm:col-span-4">
+                                <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                  البريد الإلكتروني المسجل (Gmail)
+                                </label>
+                                <input
+                                  type="email"
+                                  value={editWorkerEmail}
+                                  onChange={(e) => setEditWorkerEmail(e.target.value)}
+                                  maxLength={FIELD_LIMITS.EMAIL_MAX}
+                                  dir="ltr"
+                                  placeholder="worker@gmail.com"
+                                  className="w-full h-9 px-2.5 rounded-lg border border-neutral-300 bg-white font-mono-num text-xs focus:outline-none focus:border-[#D32F2F]"
+                                />
+                              </div>
+                              <div className="sm:col-span-4">
+                                <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                  ربط بحساب Google مسجل
+                                </label>
+                                <select
+                                  value={editWorkerLinkedUid}
+                                  onChange={(e) => {
+                                    const nextUid = e.target.value;
+                                    setEditWorkerLinkedUid(nextUid);
+                                    const matchedProfile = userProfilesByUid.get(nextUid);
+                                    if (matchedProfile) {
+                                      setEditWorkerEmail(matchedProfile.email);
+                                    }
+                                  }}
+                                  className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                                >
+                                  <option value="">-- بدون ربط بحساب (أو فك الربط) --</option>
+                                  {userProfiles.map((p) => {
+                                    const currentHolder = workers.find(
+                                      (other) => other.id !== w.id && other.claimedUid === p.uid
+                                    );
+                                    return (
+                                      <option key={p.uid} value={p.uid}>
+                                        {p.email} ({p.displayName})
+                                        {currentHolder ? ` [مربوط بـ ${currentHolder.name}]` : ''}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+                              <div className="sm:col-span-4">
+                                <label className="block text-[11px] font-bold text-neutral-600 mb-1">
+                                  المشرف المسؤول
+                                </label>
+                                <select
+                                  value={editWorkerSupId}
+                                  onChange={(e) => setEditWorkerSupId(e.target.value)}
+                                  className="w-full h-9 px-2 rounded-lg border border-neutral-300 bg-white text-xs focus:outline-none focus:border-[#D32F2F]"
+                                >
+                                  <option value={MAIN_ADMIN_SUPERVISOR_ID}>
+                                    {MAIN_ADMIN_SUPERVISOR_NAME}
+                                  </option>
+                                  {supervisors.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </>
+                          )}
+
                           <div className="sm:col-span-12 flex items-center justify-end gap-2 pt-1">
                             <button
                               type="button"
@@ -1585,6 +2079,109 @@ export function AdminPanelView({
               </div>
             </section>
           </div>
+
+          {isMainAdmin && (
+            <section className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
+              <div className="p-4 sm:px-5 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-5 h-5 text-[#D32F2F]" />
+                  <div>
+                    <h2 className="text-base font-extrabold text-neutral-900">
+                      الحسابات المسجلة وربط الإيميلات ({displayedAccounts.length})
+                    </h2>
+                    <p className="text-xs text-neutral-500">
+                      تحكم مباشرة في ربط أو نقل أو فك ربط أي بريد Google مسجل بأي عامل في القاعدة.
+                    </p>
+                  </div>
+                </div>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={accountSearch}
+                    onChange={(e) => setAccountSearch(e.target.value)}
+                    placeholder="بحث بالإيميل أو اسم الحساب..."
+                    className="h-9 pr-8 pl-3 rounded-lg border border-neutral-200 text-xs w-full sm:w-64"
+                  />
+                </div>
+              </div>
+
+              {displayedAccounts.length === 0 ? (
+                <div className="p-6 text-center text-xs text-neutral-500">
+                  لا توجد حسابات مطابقة للبحث.
+                </div>
+              ) : (
+                <div className="divide-y divide-neutral-100 max-h-[420px] overflow-y-auto">
+                  {displayedAccounts.map((profile) => {
+                    const linkedWorker =
+                      workers.find((w) => w.claimedUid === profile.uid) ||
+                      (profile.workerId
+                        ? workers.find((w) => w.id === profile.workerId) || null
+                        : null);
+                    const isLinking = busyId === `link_acc_${profile.uid}`;
+
+                    return (
+                      <div
+                        key={profile.uid}
+                        className="p-3.5 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-neutral-50"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-neutral-900">
+                              {profile.displayName || 'مستخدم'}
+                            </span>
+                            {linkedWorker ? (
+                              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                مربوط بـ: {linkedWorker.name} ({linkedWorker.employeeCode})
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-md">
+                                غير مربوط بعامل
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-neutral-600">
+                            <Mail className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                            <span className="font-mono-num" dir="ltr">
+                              {profile.email}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <select
+                            aria-label={`ربط حساب ${profile.email} بعامل`}
+                            disabled={isLinking}
+                            value={linkedWorker?.id || ''}
+                            onChange={(e) =>
+                              handleLinkAccountToWorker(profile, e.target.value)
+                            }
+                            className="h-9 px-2.5 rounded-lg border border-neutral-300 bg-white text-xs min-w-[210px] focus:outline-none focus:border-[#D32F2F] disabled:opacity-50"
+                          >
+                            <option value="">-- غير مربوط (فك الربط) --</option>
+                            {workers.map((w) => {
+                              const lineName =
+                                lines.find((l) => l.id === w.lineId)?.name || w.lineId;
+                              const otherOwner =
+                                w.claimedUid && w.claimedUid !== profile.uid
+                                  ? userProfilesByUid.get(w.claimedUid)?.email || 'حساب آخر'
+                                  : '';
+                              return (
+                                <option key={w.id} value={w.id}>
+                                  {w.name} ({w.employeeCode || 'بدون كود'}) — {lineName}
+                                  {otherOwner ? ` [مربوط بـ ${otherOwner}]` : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
 

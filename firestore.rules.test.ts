@@ -154,5 +154,27 @@ export const DIRTY_DOZEN_PAYLOADS: DirtyDozenCase[] = [
       id: 'req_backdate',
       createdAt: '2020-01-01T00:00:00Z'
     }
+  },
+  {
+    id: 13,
+    name: 'Unauthorized Direct Worker Claim Without Admin Approval',
+    collection: 'workers/w_target',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    payload: {
+      actorUid: 'random_user_uid',
+      claimedUid: 'random_user_uid'
+    }
+  },
+  {
+    id: 14,
+    name: 'Worker Link Request Self-Approval',
+    collection: 'worker_link_requests/wlr_spoof',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    payload: {
+      requesterUid: 'random_user_uid',
+      status: 'approved'
+    }
   }
 ];

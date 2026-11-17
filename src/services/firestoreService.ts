@@ -2,6 +2,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -21,7 +22,10 @@ import {
   Supervisor,
   SwapRequest,
   SwapRequestStatus,
+  UserProfile,
   Worker,
+  WorkerLinkRequest,
+  WorkerLinkRequestStatus,
 } from '../types';
 import { db, handleFirestoreError } from '../lib/firebase';
 import { formatDisplayDate } from '../lib/dateUtils';
@@ -741,11 +745,215 @@ export async function assignWorkerSupervisor(params: {
   }
 }
 
-export async function deleteWorkerByAdmin(workerId: string): Promise<void> {
+export async function deleteWorkerByAdmin(worker: Worker): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'workers', workerId));
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'workers', worker.id));
+    batch.delete(doc(db, 'worker_pii', worker.id));
+    if (worker.claimedUid) {
+      batch.update(doc(db, 'user_profiles', worker.claimedUid), {
+        workerId: '',
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `workers/${workerId}`);
+    handleFirestoreError(error, OperationType.DELETE, `workers/${worker.id}`);
+  }
+}
+
+export async function updateWorkerFullByMainAdmin(params: {
+  worker: Worker;
+  employeeCode: string;
+  name: string;
+  lineId: string;
+  supervisorId: string;
+  supervisorName: string;
+  supervisorUid: string;
+  active: boolean;
+  email: string;
+  newLinkedUid: string;
+  allWorkers: Worker[];
+  allProfiles: UserProfile[];
+}): Promise<void> {
+  const {
+    worker,
+    employeeCode,
+    name,
+    lineId,
+    supervisorId,
+    supervisorName,
+    supervisorUid,
+    active,
+    email,
+    newLinkedUid,
+    allWorkers,
+    allProfiles,
+  } = params;
+
+  const cleanCode = trimStr(employeeCode, FIELD_LIMITS.CODE_MAX);
+  const cleanName = trimStr(name, FIELD_LIMITS.NAME_MAX);
+  let cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
+
+  if (!cleanCode) {
+    throw new Error('كود العامل إجباري ولا يمكن تركه فارغاً.');
+  }
+  if (!cleanName) {
+    throw new Error('اسم العامل إجباري ولا يمكن تركه فارغاً.');
+  }
+
+  const targetProfile = newLinkedUid
+    ? allProfiles.find((p) => p.uid === newLinkedUid) || null
+    : null;
+  if (targetProfile && !cleanEmail) {
+    cleanEmail = targetProfile.email.toLowerCase();
+  }
+
+  try {
+    const batch = writeBatch(db);
+
+    // 1. Update main worker record
+    batch.update(doc(db, 'workers', worker.id), {
+      employeeCode: cleanCode,
+      name: cleanName,
+      lineId,
+      supervisorId,
+      supervisorName: trimStr(supervisorName, FIELD_LIMITS.NAME_MAX),
+      supervisorUid: supervisorUid || '',
+      claimedUid: newLinkedUid || '',
+      active,
+      updatedAt: serverTimestamp(),
+    });
+
+    // 2. Sync worker_pii/{worker.id}
+    const piiRef = doc(db, 'worker_pii', worker.id);
+    const piiSnap = await getDoc(piiRef);
+    if (cleanEmail || newLinkedUid) {
+      batch.set(piiRef, {
+        workerId: worker.id,
+        email: cleanEmail,
+        claimedUid: newLinkedUid || '',
+        supervisorId,
+        updatedAt: serverTimestamp(),
+      });
+    } else if (piiSnap.exists()) {
+      batch.delete(piiRef);
+    }
+
+    // 3. If previous UID was linked and changed, clear old user_profile.workerId
+    if (worker.claimedUid && worker.claimedUid !== newLinkedUid) {
+      const oldProfileRef = doc(db, 'user_profiles', worker.claimedUid);
+      const oldProfileSnap = await getDoc(oldProfileRef);
+      if (oldProfileSnap.exists() && oldProfileSnap.data().workerId === worker.id) {
+        batch.update(oldProfileRef, {
+          workerId: '',
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+
+    // 4. If newLinkedUid is set, link user_profiles/{newLinkedUid} and unlink any previous worker they held
+    if (newLinkedUid) {
+      const previousWorkerOfUser = allWorkers.find(
+        (other) => other.id !== worker.id && other.claimedUid === newLinkedUid
+      );
+      if (previousWorkerOfUser) {
+        batch.update(doc(db, 'workers', previousWorkerOfUser.id), {
+          claimedUid: '',
+          updatedAt: serverTimestamp(),
+        });
+        const prevPiiRef = doc(db, 'worker_pii', previousWorkerOfUser.id);
+        const prevPiiSnap = await getDoc(prevPiiRef);
+        if (prevPiiSnap.exists()) {
+          batch.update(prevPiiRef, {
+            claimedUid: '',
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      const newProfileRef = doc(db, 'user_profiles', newLinkedUid);
+      const newProfileSnap = await getDoc(newProfileRef);
+      if (newProfileSnap.exists()) {
+        batch.update(newProfileRef, {
+          workerId: worker.id,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `workers/${worker.id}`);
+  }
+}
+
+export async function linkAccountToWorkerByMainAdmin(params: {
+  profile: UserProfile;
+  targetWorker: Worker | null;
+  allWorkers: Worker[];
+}): Promise<void> {
+  const { profile, targetWorker, allWorkers } = params;
+
+  try {
+    const batch = writeBatch(db);
+
+    // Clear any worker currently linked to this user
+    for (const w of allWorkers) {
+      if (w.claimedUid === profile.uid && w.id !== targetWorker?.id) {
+        batch.update(doc(db, 'workers', w.id), {
+          claimedUid: '',
+          updatedAt: serverTimestamp(),
+        });
+        const oldPiiRef = doc(db, 'worker_pii', w.id);
+        const oldPiiSnap = await getDoc(oldPiiRef);
+        if (oldPiiSnap.exists()) {
+          batch.update(oldPiiRef, {
+            claimedUid: '',
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+    }
+
+    if (targetWorker) {
+      // If targetWorker was linked to a different user, clear that old user's profile
+      if (targetWorker.claimedUid && targetWorker.claimedUid !== profile.uid) {
+        const prevOwnerRef = doc(db, 'user_profiles', targetWorker.claimedUid);
+        const prevOwnerSnap = await getDoc(prevOwnerRef);
+        if (prevOwnerSnap.exists()) {
+          batch.update(prevOwnerRef, {
+            workerId: '',
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      batch.update(doc(db, 'workers', targetWorker.id), {
+        claimedUid: profile.uid,
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'worker_pii', targetWorker.id), {
+        workerId: targetWorker.id,
+        email: profile.email.toLowerCase(),
+        claimedUid: profile.uid,
+        supervisorId: targetWorker.supervisorId,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'user_profiles', profile.uid), {
+        workerId: targetWorker.id,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      batch.update(doc(db, 'user_profiles', profile.uid), {
+        workerId: '',
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `user_profiles/${profile.uid}`);
   }
 }
 
@@ -957,66 +1165,293 @@ export async function deleteSupervisorAndReassign(params: {
   }
 }
 
-export async function claimExistingWorker(params: {
-  workerId: string;
-  uid: string;
-  employeeCode?: string;
-}): Promise<void> {
-  const { workerId, uid, employeeCode } = params;
-  const cleanCode = employeeCode ? trimStr(employeeCode, FIELD_LIMITS.CODE_MAX) : '';
-  try {
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'workers', workerId), {
-      claimedUid: uid,
-      ...(cleanCode ? { employeeCode: cleanCode } : {}),
-      updatedAt: serverTimestamp(),
-    });
-    batch.update(doc(db, 'user_profiles', uid), {
-      workerId,
-      updatedAt: serverTimestamp(),
-    });
-    await batch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `workers/${workerId}`);
-  }
-}
-
-export async function registerSelfAsWorker(params: {
-  employeeCode: string;
-  name: string;
-  lineId: string;
-  uid: string;
+export async function submitWorkerLinkRequest(params: {
+  requestType: 'claim' | 'create';
+  requesterUid: string;
+  requesterEmail: string;
+  requesterDisplayName: string;
+  targetWorkerId?: string;
+  requestedName: string;
+  requestedEmployeeCode: string;
+  line: ProductionLine;
 }): Promise<string> {
-  const { employeeCode, name, lineId, uid } = params;
-  const cleanCode = trimStr(employeeCode, FIELD_LIMITS.CODE_MAX);
-  if (!cleanCode) {
+  const {
+    requestType,
+    requesterUid,
+    requesterEmail,
+    requesterDisplayName,
+    targetWorkerId = '',
+    requestedName,
+    requestedEmployeeCode,
+    line,
+  } = params;
+
+  const cleanCode = trimStr(requestedEmployeeCode, FIELD_LIMITS.CODE_MAX);
+  const cleanName = trimStr(requestedName, FIELD_LIMITS.NAME_MAX);
+  const cleanEmail = trimStr(requesterEmail, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
+  const cleanDisplayName = trimStr(
+    requesterDisplayName || cleanEmail.split('@')[0] || 'مستخدم',
+    FIELD_LIMITS.NAME_MAX
+  );
+
+  if (requestType === 'create' && !cleanCode) {
     throw new Error('كود العامل إجباري لإتمام التسجيل.');
   }
-  const workerId = makeSafeId('w');
+  if (!cleanName) {
+    throw new Error('اسم العامل إجباري.');
+  }
+  if (!cleanEmail) {
+    throw new Error('البريد الإلكتروني الموثق مطلوب.');
+  }
+
+  const reqId = makeSafeId('wlr');
+  const notifId = makeSafeId('notif');
+
   try {
     const batch = writeBatch(db);
-    batch.set(doc(db, 'workers', workerId), {
-      id: workerId,
-      employeeCode: cleanCode,
-      name: trimStr(name, FIELD_LIMITS.NAME_MAX),
-      lineId,
-      supervisorId: MAIN_ADMIN_SUPERVISOR_ID,
-      supervisorName: MAIN_ADMIN_SUPERVISOR_NAME,
-      supervisorUid: '',
-      claimedUid: uid,
-      active: true,
-      isTeamDirectory: true,
+    batch.set(doc(db, 'worker_link_requests', reqId), {
+      id: reqId,
+      requestType,
+      requesterUid,
+      requesterEmail: cleanEmail,
+      requesterDisplayName: cleanDisplayName,
+      targetWorkerId: requestType === 'claim' ? targetWorkerId : '',
+      requestedName: cleanName,
+      requestedEmployeeCode: cleanCode,
+      requestedLineId: line.id,
+      requestedLineName: trimStr(line.name, FIELD_LIMITS.LINE_NAME_MAX),
+      status: WorkerLinkRequestStatus.PENDING,
+      rejectionReason: '',
+      reviewedByUid: '',
+      reviewedByName: '',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    batch.update(doc(db, 'user_profiles', uid), {
-      workerId,
+
+    batch.set(doc(db, 'notifications', notifId), {
+      id: notifId,
+      recipientUid: '',
+      recipientRole: 'admin',
+      recipientSupervisorId: MAIN_ADMIN_SUPERVISOR_ID,
+      recipientSupervisorUid: '',
+      senderUid: requesterUid,
+      title: 'طلب ربط وتوثيق حساب عامل',
+      message: `طلب ${cleanEmail} ربط حسابه بـ "${cleanName}"${cleanCode ? ` (كود: ${cleanCode})` : ''} في ${line.name} — بانتظار موافقة الحساب الرئيسي.`,
+      type: NotificationType.WORKER_LINK_REQUESTED,
+      relatedId: reqId,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    return reqId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `worker_link_requests/${reqId}`);
+  }
+}
+
+export async function cancelWorkerLinkRequest(requestId: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'worker_link_requests', requestId), {
+      status: WorkerLinkRequestStatus.CANCELLED,
       updatedAt: serverTimestamp(),
     });
-    await batch.commit();
-    return workerId;
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `workers/${workerId}`);
+    handleFirestoreError(error, OperationType.UPDATE, `worker_link_requests/${requestId}`);
+  }
+}
+
+export async function reviewWorkerLinkRequest(params: {
+  request: WorkerLinkRequest;
+  decision: 'approved' | 'rejected';
+  reviewerUid: string;
+  reviewerName: string;
+  rejectionReason?: string;
+  editedName?: string;
+  editedEmployeeCode?: string;
+  editedLine?: ProductionLine;
+  supervisorId?: string;
+  supervisorName?: string;
+  supervisorUid?: string;
+  allWorkers?: Worker[];
+}): Promise<void> {
+  const {
+    request,
+    decision,
+    reviewerUid,
+    reviewerName,
+    rejectionReason = '',
+    editedName,
+    editedEmployeeCode,
+    editedLine,
+    supervisorId = MAIN_ADMIN_SUPERVISOR_ID,
+    supervisorName = MAIN_ADMIN_SUPERVISOR_NAME,
+    supervisorUid = '',
+    allWorkers = [],
+  } = params;
+
+  const notifId = makeSafeId('notif');
+  const finalName = trimStr(editedName || request.requestedName, FIELD_LIMITS.NAME_MAX);
+  const finalCode = trimStr(
+    editedEmployeeCode !== undefined ? editedEmployeeCode : request.requestedEmployeeCode,
+    FIELD_LIMITS.CODE_MAX
+  );
+  const finalLineId = editedLine?.id || request.requestedLineId;
+  const finalLineName = trimStr(
+    editedLine?.name || request.requestedLineName,
+    FIELD_LIMITS.LINE_NAME_MAX
+  );
+
+  if (decision === 'approved' && !finalCode) {
+    throw new Error('كود العامل إجباري قبل الموافقة على ربط الحساب.');
+  }
+
+  try {
+    const batch = writeBatch(db);
+    let resolvedWorkerId = request.targetWorkerId;
+
+    if (decision === 'approved') {
+      const cleanEmail = request.requesterEmail.toLowerCase();
+
+      // Clear any previous worker already linked to requesterUid
+      for (const w of allWorkers) {
+        if (w.claimedUid === request.requesterUid && w.id !== request.targetWorkerId) {
+          batch.update(doc(db, 'workers', w.id), {
+            claimedUid: '',
+            updatedAt: serverTimestamp(),
+          });
+          const oldPiiRef = doc(db, 'worker_pii', w.id);
+          const oldPiiSnap = await getDoc(oldPiiRef);
+          if (oldPiiSnap.exists()) {
+            batch.update(oldPiiRef, {
+              claimedUid: '',
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+      }
+
+      if (request.requestType === 'claim' && request.targetWorkerId) {
+        const targetRef = doc(db, 'workers', request.targetWorkerId);
+        const targetSnap = await getDoc(targetRef);
+        if (!targetSnap.exists()) {
+          throw new Error('ملف العامل المحدد لم يعد موجوداً في قاعدة البيانات.');
+        }
+        const targetData = targetSnap.data() as Worker;
+        // If target worker was previously claimed by someone else, clear old owner's profile
+        if (targetData.claimedUid && targetData.claimedUid !== request.requesterUid) {
+          const prevProfileRef = doc(db, 'user_profiles', targetData.claimedUid);
+          const prevProfileSnap = await getDoc(prevProfileRef);
+          if (prevProfileSnap.exists()) {
+            batch.update(prevProfileRef, {
+              workerId: '',
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
+        batch.update(targetRef, {
+          claimedUid: request.requesterUid,
+          employeeCode: finalCode,
+          name: finalName,
+          lineId: finalLineId,
+          updatedAt: serverTimestamp(),
+        });
+
+        batch.set(doc(db, 'worker_pii', request.targetWorkerId), {
+          workerId: request.targetWorkerId,
+          email: cleanEmail,
+          claimedUid: request.requesterUid,
+          supervisorId: targetData.supervisorId || supervisorId,
+          updatedAt: serverTimestamp(),
+        });
+
+        resolvedWorkerId = request.targetWorkerId;
+      } else {
+        const newWorkerId = makeSafeId('w');
+        resolvedWorkerId = newWorkerId;
+
+        batch.set(doc(db, 'workers', newWorkerId), {
+          id: newWorkerId,
+          employeeCode: finalCode,
+          name: finalName,
+          lineId: finalLineId,
+          supervisorId,
+          supervisorName: trimStr(supervisorName, FIELD_LIMITS.NAME_MAX),
+          supervisorUid:
+            supervisorId === MAIN_ADMIN_SUPERVISOR_ID ? reviewerUid : supervisorUid || '',
+          claimedUid: request.requesterUid,
+          active: true,
+          isTeamDirectory: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        batch.set(doc(db, 'worker_pii', newWorkerId), {
+          workerId: newWorkerId,
+          email: cleanEmail,
+          claimedUid: request.requesterUid,
+          supervisorId,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      const profileRef = doc(db, 'user_profiles', request.requesterUid);
+      const profileSnap = await getDoc(profileRef);
+      if (profileSnap.exists()) {
+        batch.update(profileRef, {
+          workerId: resolvedWorkerId,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+
+    batch.update(doc(db, 'worker_link_requests', request.id), {
+      status:
+        decision === 'approved'
+          ? WorkerLinkRequestStatus.APPROVED
+          : WorkerLinkRequestStatus.REJECTED,
+      rejectionReason:
+        decision === 'rejected' ? trimStr(rejectionReason, FIELD_LIMITS.REASON_MAX) : '',
+      reviewedByUid: reviewerUid,
+      reviewedByName: trimStr(reviewerName, FIELD_LIMITS.NAME_MAX),
+      targetWorkerId: resolvedWorkerId || '',
+      requestedName: finalName,
+      requestedEmployeeCode: finalCode,
+      requestedLineId: finalLineId,
+      requestedLineName: finalLineName,
+      updatedAt: serverTimestamp(),
+    });
+
+    batch.set(doc(db, 'notifications', notifId), {
+      id: notifId,
+      recipientUid: request.requesterUid,
+      recipientRole: 'user',
+      recipientSupervisorId: '',
+      recipientSupervisorUid: '',
+      senderUid: reviewerUid,
+      title:
+        decision === 'approved'
+          ? 'تمت الموافقة على ربط حسابك'
+          : 'تم رفض طلب ربط الحساب',
+      message:
+        decision === 'approved'
+          ? `وافق الحساب الرئيسي على ربط بريدك (${request.requesterEmail}) بملف العامل "${finalName}" (كود: ${finalCode}). يمكنك الآن إرسال طلبات الإجازة والتبديل.`
+          : `رفض الحساب الرئيسي طلب ربط حسابك بـ "${request.requestedName}"${
+              rejectionReason ? ` — السبب: ${trimStr(rejectionReason, 150)}` : '.'
+            }`,
+      type:
+        decision === 'approved'
+          ? NotificationType.WORKER_LINK_APPROVED
+          : NotificationType.WORKER_LINK_REJECTED,
+      relatedId: request.id,
+      isRead: false,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `worker_link_requests/${request.id}`);
   }
 }
 

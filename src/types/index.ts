@@ -36,6 +36,16 @@ export enum NotificationType {
   SWAP_APPROVED = 'swap_approved',
   SWAP_REJECTED = 'swap_rejected',
   ADMIN_NOTICE = 'admin_notice',
+  WORKER_LINK_REQUESTED = 'worker_link_requested',
+  WORKER_LINK_APPROVED = 'worker_link_approved',
+  WORKER_LINK_REJECTED = 'worker_link_rejected',
+}
+
+export enum WorkerLinkRequestStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  CANCELLED = 'cancelled',
 }
 
 export const FIELD_LIMITS = {
@@ -170,6 +180,25 @@ export interface SwapRequest {
   status: SwapRequestStatus;
   rejectionReason: string;
   reviewedByUid: string;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface WorkerLinkRequest {
+  id: string;
+  requestType: 'claim' | 'create';
+  requesterUid: string;
+  requesterEmail: string;
+  requesterDisplayName: string;
+  targetWorkerId: string;
+  requestedName: string;
+  requestedEmployeeCode: string;
+  requestedLineId: string;
+  requestedLineName: string;
+  status: WorkerLinkRequestStatus;
+  rejectionReason: string;
+  reviewedByUid: string;
+  reviewedByName: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
