@@ -961,6 +961,7 @@ export async function createSupervisor(params: {
   name: string;
   email: string;
   canManageTeam: boolean;
+  isAssistantAdmin?: boolean;
   allowedLineIds?: string[];
   createdByUid: string;
   assignedWorkerIds: string[];
@@ -969,6 +970,7 @@ export async function createSupervisor(params: {
     name,
     email,
     canManageTeam,
+    isAssistantAdmin = false,
     allowedLineIds = [],
     createdByUid,
     assignedWorkerIds,
@@ -988,7 +990,8 @@ export async function createSupervisor(params: {
       email: cleanEmail,
       uid: '',
       active: true,
-      canManageTeam,
+      canManageTeam: isAssistantAdmin ? true : canManageTeam,
+      isAssistantAdmin: Boolean(isAssistantAdmin),
       allowedLineIds: cleanLineIds,
       createdByUid,
       createdAt: serverTimestamp(),
@@ -1030,12 +1033,16 @@ export async function updateSupervisorConfig(params: {
   supervisor: Supervisor;
   active: boolean;
   canManageTeam: boolean;
+  isAssistantAdmin?: boolean;
 }): Promise<void> {
-  const { supervisor, active, canManageTeam } = params;
+  const { supervisor, active, canManageTeam, isAssistantAdmin } = params;
+  const nextAssistant =
+    isAssistantAdmin !== undefined ? isAssistantAdmin : Boolean(supervisor.isAssistantAdmin);
   try {
     await updateDoc(doc(db, 'supervisors', supervisor.id), {
       active,
-      canManageTeam,
+      canManageTeam: nextAssistant ? true : canManageTeam,
+      isAssistantAdmin: nextAssistant,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
@@ -1067,9 +1074,18 @@ export async function updateSupervisorDetails(params: {
   email: string;
   active: boolean;
   canManageTeam: boolean;
+  isAssistantAdmin?: boolean;
   allowedLineIds?: string[];
 }): Promise<void> {
-  const { supervisor, name, email, active, canManageTeam, allowedLineIds } = params;
+  const {
+    supervisor,
+    name,
+    email,
+    active,
+    canManageTeam,
+    isAssistantAdmin = false,
+    allowedLineIds,
+  } = params;
   const cleanName = trimStr(name, FIELD_LIMITS.NAME_MAX);
   const cleanEmail = trimStr(email, FIELD_LIMITS.EMAIL_MAX).toLowerCase();
   const emailChanged = cleanEmail !== supervisor.email.toLowerCase();
@@ -1089,7 +1105,8 @@ export async function updateSupervisorDetails(params: {
       email: cleanEmail,
       uid: emailChanged ? '' : supervisor.uid,
       active,
-      canManageTeam,
+      canManageTeam: isAssistantAdmin ? true : canManageTeam,
+      isAssistantAdmin: Boolean(isAssistantAdmin),
       allowedLineIds: cleanLineIds,
       updatedAt: serverTimestamp(),
     });

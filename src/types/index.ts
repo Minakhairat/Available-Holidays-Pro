@@ -112,6 +112,7 @@ export interface Supervisor {
   uid: string;
   active: boolean;
   canManageTeam: boolean;
+  isAssistantAdmin?: boolean;
   allowedLineIds?: string[];
   createdByUid: string;
   createdAt?: Timestamp;

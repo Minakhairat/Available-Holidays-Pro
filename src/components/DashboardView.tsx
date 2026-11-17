@@ -46,6 +46,7 @@ interface DashboardViewProps {
   userEmail: string;
   isMainAdmin: boolean;
   isSupervisor: boolean;
+  isAssistantAdmin?: boolean;
   loading: boolean;
   onOpenMonthlyForLine: (lineId: string) => void;
   onRequestLeave: (line: ProductionLine, date: string) => void;
@@ -67,6 +68,7 @@ export function DashboardView({
   userEmail,
   isMainAdmin,
   isSupervisor,
+  isAssistantAdmin = false,
   loading,
   onOpenMonthlyForLine,
   onRequestLeave,
@@ -253,7 +255,7 @@ export function DashboardView({
         leaveRequests={leaveRequests}
         swapRequests={swapRequests}
         workerLinkRequests={workerLinkRequests}
-        isMainAdmin={isMainAdmin}
+        isMainAdmin={isMainAdmin || isAssistantAdmin}
       />
 
       {/* Filter & Search Toolbar */}

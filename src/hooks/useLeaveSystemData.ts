@@ -31,7 +31,8 @@ function sortByCreatedDesc<T extends { createdAt?: { toMillis?: () => number } }
 }
 
 export function useLeaveSystemData() {
-  const { user, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
+  const { user, supervisorRecord, isMainAdmin, isSupervisor, isAssistantAdmin, authReady } =
+    useAuth();
 
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -57,7 +58,10 @@ export function useLeaveSystemData() {
 
   const [loading, setLoading] = useState(true);
 
-  const supCanManageTeam = Boolean(isSupervisor && supervisorRecord?.canManageTeam);
+  const isAdminOrAssistant = isMainAdmin || isAssistantAdmin;
+  const supCanManageTeam = Boolean(
+    isSupervisor && (supervisorRecord?.canManageTeam || supervisorRecord?.isAssistantAdmin)
+  );
   const supAllowedLineIdsKey = (supervisorRecord?.allowedLineIds || []).join(',');
 
   useEffect(() => {
@@ -113,7 +117,7 @@ export function useLeaveSystemData() {
 
     // 4. Leave Requests
     setSupLineLeaveReqs({});
-    if (isMainAdmin || supCanManageTeam) {
+    if (isAdminOrAssistant || supCanManageTeam) {
       unsubs.push(
         onSnapshot(
           collection(db, 'leave_requests'),
@@ -162,7 +166,7 @@ export function useLeaveSystemData() {
 
     // 5. Swap Requests
     setSupLineSwaps({});
-    if (isMainAdmin || supCanManageTeam) {
+    if (isAdminOrAssistant || supCanManageTeam) {
       unsubs.push(
         onSnapshot(
           collection(db, 'swap_requests'),
@@ -239,7 +243,7 @@ export function useLeaveSystemData() {
       )
     );
 
-    if (isMainAdmin) {
+    if (isAdminOrAssistant) {
       unsubs.push(
         onSnapshot(
           query(collection(db, 'notifications'), where('recipientRole', '==', 'admin')),
@@ -267,8 +271,8 @@ export function useLeaveSystemData() {
       setSupNotifs([]);
     }
 
-    // 7. Supervisors, Worker PII, & User Profiles (Main Admin)
-    if (isMainAdmin) {
+    // 7. Supervisors, Worker PII, & User Profiles (Main Admin & Assistant Admin)
+    if (isAdminOrAssistant) {
       unsubs.push(
         onSnapshot(
           collection(db, 'supervisors'),
@@ -326,7 +330,16 @@ export function useLeaveSystemData() {
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [authReady, user, isMainAdmin, isSupervisor, supCanManageTeam, supAllowedLineIdsKey]);
+  }, [
+    authReady,
+    user,
+    isMainAdmin,
+    isSupervisor,
+    isAssistantAdmin,
+    isAdminOrAssistant,
+    supCanManageTeam,
+    supAllowedLineIdsKey,
+  ]);
 
   const leaveRequests = useMemo(() => {
     const map = new Map<string, LeaveRequest>();

@@ -66,6 +66,7 @@ import {
 } from '../lib/permissions';
 import { LineIcon } from './LineIcon';
 import { ExcelWorkerImportCard } from './ExcelWorkerImportCard';
+import { JsonBackupPanel } from './JsonBackupPanel';
 
 interface AdminPanelViewProps {
   lines: ProductionLine[];
@@ -80,13 +81,15 @@ interface AdminPanelViewProps {
   workerLinkRequests: WorkerLinkRequest[];
   isMainAdmin: boolean;
   isSupervisor: boolean;
+  isAssistantAdmin?: boolean;
   supervisorRecord: Supervisor | null;
   actorUid: string;
+  actorEmail?: string;
   actorName: string;
   onSuccessToast: (msg: string) => void;
 }
 
-type AdminTab = 'approvals' | 'direct_leaves' | 'workers' | 'subadmins';
+type AdminTab = 'approvals' | 'direct_leaves' | 'workers' | 'subadmins' | 'backup';
 
 export function AdminPanelView({
   lines,
@@ -100,11 +103,14 @@ export function AdminPanelView({
   userProfilesByUid,
   workerLinkRequests,
   isMainAdmin,
+  isAssistantAdmin = false,
   supervisorRecord,
   actorUid,
+  actorEmail = '',
   actorName,
   onSuccessToast,
 }: AdminPanelViewProps) {
+  const isAdminOrAssistant = isMainAdmin || isAssistantAdmin;
   const [tab, setTab] = useState<AdminTab>('approvals');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
@@ -127,7 +133,9 @@ export function AdminPanelView({
   const [wLineId, setWLineId] = useState(lines[0]?.id || 'line1');
   const [wEmail, setWEmail] = useState('');
   const [wSupId, setWSupId] = useState(
-    isMainAdmin ? MAIN_ADMIN_SUPERVISOR_ID : supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID
+    isAdminOrAssistant
+      ? MAIN_ADMIN_SUPERVISOR_ID
+      : supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID
   );
   const [workerSearch, setWorkerSearch] = useState('');
   const [accountSearch, setAccountSearch] = useState('');
@@ -146,6 +154,7 @@ export function AdminPanelView({
   const [supName, setSupName] = useState('');
   const [supEmail, setSupEmail] = useState('');
   const [supCanManage, setSupCanManage] = useState(true);
+  const [supIsAssistantAdmin, setSupIsAssistantAdmin] = useState(false);
   const [supLineIds, setSupLineIds] = useState<string[]>([]);
   const [supWorkerIds, setSupWorkerIds] = useState<string[]>([]);
   const [expandedSupId, setExpandedSupId] = useState<string | null>(null);
@@ -156,6 +165,7 @@ export function AdminPanelView({
   const [editSupName, setEditSupName] = useState('');
   const [editSupEmail, setEditSupEmail] = useState('');
   const [editSupCanManage, setEditSupCanManage] = useState(true);
+  const [editSupIsAssistantAdmin, setEditSupIsAssistantAdmin] = useState(false);
   const [editSupActive, setEditSupActive] = useState(true);
   const [editSupLineIds, setEditSupLineIds] = useState<string[]>([]);
 
@@ -174,8 +184,8 @@ export function AdminPanelView({
   const mySupId = supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
 
   const allowedLines = useMemo(
-    () => getSupervisorAllowedLines(lines, isMainAdmin, supervisorRecord),
-    [lines, isMainAdmin, supervisorRecord]
+    () => getSupervisorAllowedLines(lines, isAdminOrAssistant, supervisorRecord),
+    [lines, isAdminOrAssistant, supervisorRecord]
   );
 
   const effectiveDlLineId = useMemo(() => {
@@ -191,9 +201,9 @@ export function AdminPanelView({
   // Scope filters
   const scopedWorkers = useMemo(() => {
     return workers.filter((w) =>
-      canSupervisorControlWorker(w, isMainAdmin, supervisorRecord)
+      canSupervisorControlWorker(w, isAdminOrAssistant, supervisorRecord)
     );
-  }, [workers, isMainAdmin, supervisorRecord]);
+  }, [workers, isAdminOrAssistant, supervisorRecord]);
 
   const unassignedWorkers = useMemo(
     () => workers.filter((w) => w.supervisorId === MAIN_ADMIN_SUPERVISOR_ID),
@@ -203,30 +213,30 @@ export function AdminPanelView({
   const pendingLeaveReqs = useMemo(() => {
     return leaveRequests.filter((r) => {
       if (r.status !== LeaveRequestStatus.PENDING) return false;
-      if (isMainAdmin) return true;
+      if (isAdminOrAssistant) return true;
       return (
-        canSupervisorControlLine(r.lineId, isMainAdmin, supervisorRecord) ||
+        canSupervisorControlLine(r.lineId, isAdminOrAssistant, supervisorRecord) ||
         r.supervisorId === mySupId
       );
     });
-  }, [leaveRequests, isMainAdmin, supervisorRecord, mySupId]);
+  }, [leaveRequests, isAdminOrAssistant, supervisorRecord, mySupId]);
 
   const pendingSwapReqs = useMemo(() => {
     return swapRequests.filter((s) => {
       if (s.status !== SwapRequestStatus.PENDING_SUPERVISOR) return false;
-      if (isMainAdmin) return true;
+      if (isAdminOrAssistant) return true;
       return (
-        canSupervisorControlLine(s.lineId, isMainAdmin, supervisorRecord) ||
+        canSupervisorControlLine(s.lineId, isAdminOrAssistant, supervisorRecord) ||
         s.fromSupervisorId === mySupId ||
         s.toSupervisorId === mySupId
       );
     });
-  }, [swapRequests, isMainAdmin, supervisorRecord, mySupId]);
+  }, [swapRequests, isAdminOrAssistant, supervisorRecord, mySupId]);
 
   const pendingLinkReqs = useMemo(() => {
-    if (!isMainAdmin) return [];
+    if (!isAdminOrAssistant) return [];
     return workerLinkRequests.filter((r) => r.status === WorkerLinkRequestStatus.PENDING);
-  }, [isMainAdmin, workerLinkRequests]);
+  }, [isAdminOrAssistant, workerLinkRequests]);
 
   const totalPending =
     pendingLeaveReqs.length + pendingSwapReqs.length + pendingLinkReqs.length;
@@ -240,27 +250,27 @@ export function AdminPanelView({
   };
 
   const leaveFilterLines = useMemo(() => {
-    if (isMainAdmin) return lines;
+    if (isAdminOrAssistant) return lines;
     return lines.filter(
       (l) =>
-        canSupervisorControlLine(l.id, isMainAdmin, supervisorRecord) ||
+        canSupervisorControlLine(l.id, isAdminOrAssistant, supervisorRecord) ||
         scopedWorkers.some((w) => w.lineId === l.id)
     );
-  }, [lines, isMainAdmin, supervisorRecord, scopedWorkers]);
+  }, [lines, isAdminOrAssistant, supervisorRecord, scopedWorkers]);
 
   const scopedLeaves = useMemo(() => {
     const q = leaveSearch.trim().toLowerCase();
     return [...leaves]
       .filter((l) => {
-        if (!isMainAdmin) {
+        if (!isAdminOrAssistant) {
           const worker = workers.find((w) => w.id === l.workerId);
           const allowedByLine = canSupervisorControlLine(
             l.lineId,
-            isMainAdmin,
+            isAdminOrAssistant,
             supervisorRecord
           );
           const allowedByWorker = worker
-            ? canSupervisorControlWorker(worker, isMainAdmin, supervisorRecord)
+            ? canSupervisorControlWorker(worker, isAdminOrAssistant, supervisorRecord)
             : false;
           if (!allowedByLine && !allowedByWorker) return false;
         }
@@ -397,7 +407,12 @@ export function AdminPanelView({
     const chosenSup = supervisors.find((s) => s.id === vals.supId);
     const supId = chosenSup?.id || MAIN_ADMIN_SUPERVISOR_ID;
     const supName = chosenSup?.name || MAIN_ADMIN_SUPERVISOR_NAME;
-    const supUid = supId === MAIN_ADMIN_SUPERVISOR_ID ? actorUid : chosenSup?.uid || '';
+    const supUid =
+      supId === MAIN_ADMIN_SUPERVISOR_ID
+        ? isMainAdmin
+          ? actorUid
+          : ''
+        : chosenSup?.uid || '';
 
     setBusyId(`wlr_${req.id}`);
     try {
@@ -517,18 +532,20 @@ export function AdminPanelView({
       return;
     }
 
-    const chosenSup = isMainAdmin
+    const chosenSup = isAdminOrAssistant
       ? supervisors.find((s) => s.id === wSupId)
       : supervisorRecord;
-    const supervisorId = isMainAdmin
+    const supervisorId = isAdminOrAssistant
       ? chosenSup?.id || MAIN_ADMIN_SUPERVISOR_ID
       : supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
-    const supervisorName = isMainAdmin
+    const supervisorName = isAdminOrAssistant
       ? chosenSup?.name || MAIN_ADMIN_SUPERVISOR_NAME
       : supervisorRecord?.name || MAIN_ADMIN_SUPERVISOR_NAME;
-    const supervisorUid = isMainAdmin
+    const supervisorUid = isAdminOrAssistant
       ? supervisorId === MAIN_ADMIN_SUPERVISOR_ID
-        ? actorUid
+        ? isMainAdmin
+          ? actorUid
+          : ''
         : chosenSup?.uid || ''
       : actorUid;
 
@@ -596,12 +613,16 @@ export function AdminPanelView({
 
     setBusyId(`edit_worker_${worker.id}`);
     try {
-      if (isMainAdmin) {
+      if (isAdminOrAssistant) {
         const chosenSup = supervisors.find((s) => s.id === editWorkerSupId);
         const supId = chosenSup?.id || MAIN_ADMIN_SUPERVISOR_ID;
         const supName = chosenSup?.name || MAIN_ADMIN_SUPERVISOR_NAME;
         const supUid =
-          supId === MAIN_ADMIN_SUPERVISOR_ID ? actorUid : chosenSup?.uid || '';
+          supId === MAIN_ADMIN_SUPERVISOR_ID
+            ? isMainAdmin
+              ? actorUid
+              : ''
+            : chosenSup?.uid || '';
 
         await updateWorkerFullByMainAdmin({
           worker,
@@ -675,16 +696,22 @@ export function AdminPanelView({
       await createSupervisor({
         name: supName.trim(),
         email: supEmail.trim().toLowerCase(),
-        canManageTeam: supCanManage,
+        canManageTeam: supIsAssistantAdmin ? true : supCanManage,
+        isAssistantAdmin: supIsAssistantAdmin,
         allowedLineIds: supLineIds,
         createdByUid: actorUid,
         assignedWorkerIds: supWorkerIds,
       });
       setSupName('');
       setSupEmail('');
+      setSupIsAssistantAdmin(false);
       setSupLineIds([]);
       setSupWorkerIds([]);
-      onSuccessToast('تمت إضافة المشرف المساعد وتحديد صلاحياته بنجاح');
+      onSuccessToast(
+        supIsAssistantAdmin
+          ? 'تمت إضافة الأدمن المساعد ومنحه صلاحيات البيانات الكاملة بنجاح'
+          : 'تمت إضافة المشرف المساعد وتحديد صلاحياته بنجاح'
+      );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذر إضافة المشرف');
     } finally {
@@ -802,6 +829,7 @@ export function AdminPanelView({
     setEditSupName(sup.name);
     setEditSupEmail(sup.email);
     setEditSupCanManage(sup.canManageTeam);
+    setEditSupIsAssistantAdmin(Boolean(sup.isAssistantAdmin));
     setEditSupActive(sup.active);
     setEditSupLineIds(sup.allowedLineIds || []);
   };
@@ -831,7 +859,8 @@ export function AdminPanelView({
         name: trimmedName,
         email: trimmedEmail,
         active: editSupActive,
-        canManageTeam: editSupCanManage,
+        canManageTeam: editSupIsAssistantAdmin ? true : editSupCanManage,
+        isAssistantAdmin: editSupIsAssistantAdmin,
         allowedLineIds: editSupLineIds,
       });
       setEditingSupId(null);
@@ -924,6 +953,9 @@ export function AdminPanelView({
     ...(isMainAdmin
       ? [{ id: 'subadmins' as AdminTab, label: 'المشرفين والإعدادات' }]
       : []),
+    ...(isAdminOrAssistant
+      ? [{ id: 'backup' as AdminTab, label: 'تصدير واستيراد JSON' }]
+      : []),
   ];
 
   const displayedWorkers = scopedWorkers.filter((w) => {
@@ -964,16 +996,20 @@ export function AdminPanelView({
               <h1 className="text-lg font-extrabold text-neutral-900">
                 {isMainAdmin
                   ? 'لوحة التحكم الرئيسية للأدمن'
-                  : `لوحة المشرف: ${supervisorRecord?.name || actorName}`}
+                  : isAssistantAdmin
+                    ? `لوحة الأدمن المساعد: ${supervisorRecord?.name || actorName}`
+                    : `لوحة المشرف: ${supervisorRecord?.name || actorName}`}
               </h1>
               <p className="text-xs text-neutral-500">
                 {isMainAdmin
-                  ? 'صلاحية كاملة على جميع الخطوط، الموافقات، الإجازات، والمشرفين المساعدين'
-                  : supervisorRecord?.canManageTeam
-                    ? `صلاحية كاملة على جميع الخطوط والأفراد (${scopedWorkers.length} عامل)`
-                    : `تتحكم في ${allowedLines.length} ${
-                        allowedLines.length === 1 ? 'خط إنتاج' : 'خطوط إنتاج'
-                      } · ${scopedWorkers.length} عامل`}
+                  ? 'صلاحية كاملة على جميع الخطوط، الموافقات، الإجازات، تصدير واستيراد البيانات، والمشرفين المساعدين'
+                  : isAssistantAdmin
+                    ? 'صلاحية كاملة على الخطوط والأفراد وطلبات الربط وتنزيل ورفع كل البيانات (JSON)'
+                    : supervisorRecord?.canManageTeam
+                      ? `صلاحية كاملة على جميع الخطوط والأفراد (${scopedWorkers.length} عامل)`
+                      : `تتحكم في ${allowedLines.length} ${
+                          allowedLines.length === 1 ? 'خط إنتاج' : 'خطوط إنتاج'
+                        } · ${scopedWorkers.length} عامل`}
               </p>
             </div>
           </div>
@@ -1006,7 +1042,7 @@ export function AdminPanelView({
       {/* TAB 1: Approvals */}
       {tab === 'approvals' && (
         <div className="space-y-5">
-          {isMainAdmin && (
+          {isAdminOrAssistant && (
             <section className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
               <div className="px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -1407,7 +1443,7 @@ export function AdminPanelView({
               يمكنك تسجيل إجازة لأي عامل مسجل يدوياً حتى لو لم يقم بتسجيل الدخول بنفسه.
             </p>
 
-            {!isMainAdmin && allowedLines.length === 0 && (
+            {!isAdminOrAssistant && allowedLines.length === 0 && (
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
                 لم يتم تحديد خطوط إنتاج لك بعد. تواصل مع الأدمن الرئيسي لتحديد الخطوط المسموح لك بها.
               </div>
@@ -1581,7 +1617,7 @@ export function AdminPanelView({
             lines={lines}
             workers={workers}
             supervisors={supervisors}
-            isMainAdmin={isMainAdmin}
+            isMainAdmin={isAdminOrAssistant}
             supervisorRecord={supervisorRecord}
             actorUid={actorUid}
             onSuccessToast={onSuccessToast}
@@ -1635,7 +1671,7 @@ export function AdminPanelView({
                 />
               </div>
 
-              {!isMainAdmin && allowedLines.length === 0 && (
+              {!isAdminOrAssistant && allowedLines.length === 0 && (
                 <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
                   لم يتم تعيين خطوط إنتاج لك بعد. اطلب من الأدمن الرئيسي اختيار الخطوط المسموح لك بها.
                 </div>
@@ -1678,7 +1714,7 @@ export function AdminPanelView({
                 />
               </div>
 
-              {isMainAdmin && (
+              {isAdminOrAssistant && (
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 mb-1.5">
                     المشرف المسؤول عنه
@@ -1710,7 +1746,7 @@ export function AdminPanelView({
                 {busyId === 'create_worker' ? 'جاري الإضافة...' : 'إضافة العامل'}
               </button>
 
-              {!isMainAdmin &&
+              {!isAdminOrAssistant &&
                 supervisorRecord?.canManageTeam &&
                 unassignedWorkers.length > 0 && (
                   <div className="pt-4 border-t border-neutral-200 space-y-2">
@@ -1826,7 +1862,7 @@ export function AdminPanelView({
                               )}
                             </div>
                           ) : (
-                            isMainAdmin && (
+                            isAdminOrAssistant && (
                               <p className="text-[11px] text-neutral-400">
                                 لا يوجد إيميل مربوط بهذا العامل بعد
                               </p>
@@ -1868,7 +1904,7 @@ export function AdminPanelView({
                               ))}
                           </select>
 
-                          {isMainAdmin && (
+                          {isAdminOrAssistant && (
                             <select
                               value={w.supervisorId}
                               onChange={async (e) => {
@@ -1880,7 +1916,9 @@ export function AdminPanelView({
                                   supervisorName: sup?.name || MAIN_ADMIN_SUPERVISOR_NAME,
                                   supervisorUid:
                                     sid === MAIN_ADMIN_SUPERVISOR_ID
-                                      ? actorUid
+                                      ? isMainAdmin
+                                        ? actorUid
+                                        : ''
                                       : sup?.uid || '',
                                 });
                                 onSuccessToast(`تم تحديث المشرف لـ ${w.name}`);
@@ -1909,7 +1947,7 @@ export function AdminPanelView({
                             <span>{isEditing ? 'إغلاق' : 'تعديل'}</span>
                           </button>
 
-                          {isMainAdmin && (
+                          {isAdminOrAssistant && (
                             <button
                               type="button"
                               onClick={async () => {
@@ -1986,7 +2024,7 @@ export function AdminPanelView({
                             </label>
                           </div>
 
-                          {isMainAdmin && (
+                          {isAdminOrAssistant && (
                             <>
                               <div className="sm:col-span-4">
                                 <label className="block text-[11px] font-bold text-neutral-600 mb-1">
@@ -2080,7 +2118,7 @@ export function AdminPanelView({
             </section>
           </div>
 
-          {isMainAdmin && (
+          {isAdminOrAssistant && (
             <section className="bg-white border border-neutral-200 rounded-xl overflow-hidden">
               <div className="p-4 sm:px-5 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -2233,12 +2271,31 @@ export function AdminPanelView({
               <label className="flex items-start gap-2.5 text-xs font-semibold text-neutral-700 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={supCanManage}
+                  checked={supIsAssistantAdmin ? true : supCanManage}
+                  disabled={supIsAssistantAdmin}
                   onChange={(e) => setSupCanManage(e.target.checked)}
                   className="w-4 h-4 accent-[#D32F2F] mt-0.5 shrink-0"
                 />
                 <span>
                   السماح بضم أفراد غير معينين (يمنحه صلاحية التعامل مع أي فرد من أي خط)
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 p-3 rounded-lg bg-red-50/70 border border-red-200 text-xs font-bold text-neutral-900 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={supIsAssistantAdmin}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setSupIsAssistantAdmin(checked);
+                    if (checked) {
+                      setSupCanManage(true);
+                    }
+                  }}
+                  className="w-4 h-4 accent-[#D32F2F] mt-0.5 shrink-0"
+                />
+                <span>
+                  ترقية إلى <strong className="text-[#D32F2F]">أدمن مساعد</strong> (صلاحية تنزيل ورفع كل البيانات JSON + كافة الصلاحيات التشغيلية)
                 </span>
               </label>
 
@@ -2354,10 +2411,15 @@ export function AdminPanelView({
                         <div key={sup.id} className="p-4 space-y-3">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm font-extrabold text-neutral-900">
                                   {sup.name}
                                 </span>
+                                {sup.isAssistantAdmin && (
+                                  <span className="text-[11px] font-bold text-white bg-[#D32F2F] px-2 py-0.5 rounded-md">
+                                    أدمن مساعد
+                                  </span>
+                                )}
                                 <span
                                   className={`text-xs font-bold ${
                                     sup.active ? 'text-emerald-700' : 'text-neutral-400'
@@ -2370,7 +2432,11 @@ export function AdminPanelView({
                                 {sup.email}
                               </p>
                               <p className="text-xs text-neutral-600 mt-0.5">
-                                {sup.canManageTeam ? (
+                                {sup.isAssistantAdmin ? (
+                                  <span className="font-bold text-[#D32F2F]">
+                                    أدمن مساعد: تنزيل ورفع كل البيانات (JSON) + صلاحية كاملة على جميع الخطوط والأفراد
+                                  </span>
+                                ) : sup.canManageTeam ? (
                                   <span className="font-bold text-emerald-700">
                                     صلاحية كاملة على جميع الخطوط وجميع الأفراد
                                   </span>
@@ -2450,32 +2516,66 @@ export function AdminPanelView({
                               <span className="text-xs font-extrabold text-neutral-800">
                                 الخطوط المسموح له بالتحكم فيها:
                               </span>
-                              <label className="flex items-center gap-2 text-xs font-bold text-neutral-700 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={sup.canManageTeam}
-                                  disabled={busyId === `sup_manage_${sup.id}`}
-                                  onChange={async () => {
-                                    setBusyId(`sup_manage_${sup.id}`);
-                                    try {
-                                      await updateSupervisorConfig({
-                                        supervisor: sup,
-                                        active: sup.active,
-                                        canManageTeam: !sup.canManageTeam,
-                                      });
-                                      onSuccessToast(
-                                        !sup.canManageTeam
-                                          ? `تم تفعيل صلاحية كل الخطوط والأفراد لـ ${sup.name}`
-                                          : `تم قصر صلاحية ${sup.name} على الخطوط والأفراد المحددين فقط`
-                                      );
-                                    } finally {
-                                      setBusyId(null);
+                              <div className="flex flex-wrap items-center gap-4">
+                                <label className="flex items-center gap-2 text-xs font-bold text-neutral-700 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(sup.isAssistantAdmin) || sup.canManageTeam}
+                                    disabled={
+                                      busyId === `sup_manage_${sup.id}` ||
+                                      Boolean(sup.isAssistantAdmin)
                                     }
-                                  }}
-                                  className="w-4 h-4 accent-[#D32F2F]"
-                                />
-                                <span>السماح بضم أفراد غير معينين (كل الخطوط والأفراد)</span>
-                              </label>
+                                    onChange={async () => {
+                                      setBusyId(`sup_manage_${sup.id}`);
+                                      try {
+                                        await updateSupervisorConfig({
+                                          supervisor: sup,
+                                          active: sup.active,
+                                          canManageTeam: !sup.canManageTeam,
+                                        });
+                                        onSuccessToast(
+                                          !sup.canManageTeam
+                                            ? `تم تفعيل صلاحية كل الخطوط والأفراد لـ ${sup.name}`
+                                            : `تم قصر صلاحية ${sup.name} على الخطوط والأفراد المحددين فقط`
+                                        );
+                                      } finally {
+                                        setBusyId(null);
+                                      }
+                                    }}
+                                    className="w-4 h-4 accent-[#D32F2F]"
+                                  />
+                                  <span>السماح بضم أفراد غير معينين (كل الخطوط والأفراد)</span>
+                                </label>
+
+                                <label className="flex items-center gap-2 text-xs font-bold text-[#D32F2F] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(sup.isAssistantAdmin)}
+                                    disabled={busyId === `sup_assistant_${sup.id}`}
+                                    onChange={async () => {
+                                      const nextVal = !sup.isAssistantAdmin;
+                                      setBusyId(`sup_assistant_${sup.id}`);
+                                      try {
+                                        await updateSupervisorConfig({
+                                          supervisor: sup,
+                                          active: sup.active,
+                                          canManageTeam: nextVal ? true : sup.canManageTeam,
+                                          isAssistantAdmin: nextVal,
+                                        });
+                                        onSuccessToast(
+                                          nextVal
+                                            ? `تمت ترقية ${sup.name} إلى أدمن مساعد (تنزيل ورفع كل البيانات JSON)`
+                                            : `تم إلغاء صلاحية الأدمن المساعد عن ${sup.name}`
+                                        );
+                                      } finally {
+                                        setBusyId(null);
+                                      }
+                                    }}
+                                    className="w-4 h-4 accent-[#D32F2F]"
+                                  />
+                                  <span>صلاحية أدمن مساعد (تنزيل ورفع كل البيانات JSON)</span>
+                                </label>
+                              </div>
                             </div>
 
                             <div className="flex flex-wrap gap-2">
@@ -2549,13 +2649,29 @@ export function AdminPanelView({
                                 <label className="flex items-center gap-2 cursor-pointer">
                                   <input
                                     type="checkbox"
-                                    checked={editSupCanManage}
+                                    checked={editSupIsAssistantAdmin ? true : editSupCanManage}
+                                    disabled={editSupIsAssistantAdmin}
                                     onChange={(e) => setEditSupCanManage(e.target.checked)}
                                     className="w-4 h-4 accent-[#D32F2F]"
                                   />
                                   <span>
                                     السماح بضم أفراد غير معينين (التعامل مع أي فرد من أي خط)
                                   </span>
+                                </label>
+                                <label className="flex items-center gap-2 font-bold text-[#D32F2F] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={editSupIsAssistantAdmin}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked;
+                                      setEditSupIsAssistantAdmin(checked);
+                                      if (checked) {
+                                        setEditSupCanManage(true);
+                                      }
+                                    }}
+                                    className="w-4 h-4 accent-[#D32F2F]"
+                                  />
+                                  <span>أدمن مساعد (تصدير واستيراد كل البيانات JSON + كافة الصلاحيات)</span>
                                 </label>
                               </div>
                               <div>
@@ -2892,6 +3008,29 @@ export function AdminPanelView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB 5: Full JSON Backup Export & Import (Main Admin & Assistant Admin) */}
+      {tab === 'backup' && isAdminOrAssistant && (
+        <JsonBackupPanel
+          isMainAdmin={isMainAdmin}
+          isAssistantAdmin={isAssistantAdmin}
+          actorUid={actorUid}
+          actorEmail={actorEmail}
+          liveCounts={{
+            lines: lines.length,
+            workers: workers.length,
+            worker_pii: workerPiiByWorkerId.size,
+            user_profiles: userProfiles.length,
+            supervisors: supervisors.length,
+            leaves: leaves.length,
+            leave_requests: leaveRequests.length,
+            swap_requests: swapRequests.length,
+            worker_link_requests: workerLinkRequests.length,
+          }}
+          onSuccessToast={onSuccessToast}
+          onError={setErrorMsg}
+        />
       )}
     </div>
   );

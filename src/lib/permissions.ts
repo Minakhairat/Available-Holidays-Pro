@@ -7,7 +7,7 @@ export function getSupervisorAllowedLines(
 ): ProductionLine[] {
   if (isMainAdmin) return lines;
   if (!supervisorRecord || !supervisorRecord.active) return [];
-  if (supervisorRecord.canManageTeam) return lines;
+  if (supervisorRecord.canManageTeam || supervisorRecord.isAssistantAdmin) return lines;
   const allowed = supervisorRecord.allowedLineIds || [];
   return lines.filter((l) => allowed.includes(l.id));
 }
@@ -19,7 +19,7 @@ export function canSupervisorControlLine(
 ): boolean {
   if (isMainAdmin) return true;
   if (!supervisorRecord || !supervisorRecord.active) return false;
-  if (supervisorRecord.canManageTeam) return true;
+  if (supervisorRecord.canManageTeam || supervisorRecord.isAssistantAdmin) return true;
   return (supervisorRecord.allowedLineIds || []).includes(lineId);
 }
 
@@ -30,7 +30,7 @@ export function canSupervisorControlWorker(
 ): boolean {
   if (isMainAdmin) return true;
   if (!supervisorRecord || !supervisorRecord.active) return false;
-  if (supervisorRecord.canManageTeam) return true;
+  if (supervisorRecord.canManageTeam || supervisorRecord.isAssistantAdmin) return true;
   if (worker.supervisorId === supervisorRecord.id) return true;
   return (supervisorRecord.allowedLineIds || []).includes(worker.lineId);
 }

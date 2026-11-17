@@ -138,9 +138,10 @@ export function ExcelWorkerImportCard({
   onSuccessToast,
   onError,
 }: ExcelWorkerImportCardProps) {
+  const isAdminOrAssistant = isMainAdmin || Boolean(supervisorRecord?.isAssistantAdmin);
   const allowedLines = getSupervisorAllowedLines(
     lines,
-    isMainAdmin,
+    isAdminOrAssistant,
     supervisorRecord
   );
 
@@ -186,11 +187,11 @@ export function ExcelWorkerImportCard({
       }
 
       // Resolve supervisor
-      let supervisorId = isMainAdmin ? MAIN_ADMIN_SUPERVISOR_ID : mySupId;
-      let supervisorName = isMainAdmin ? MAIN_ADMIN_SUPERVISOR_NAME : mySupName;
+      let supervisorId = isAdminOrAssistant ? MAIN_ADMIN_SUPERVISOR_ID : mySupId;
+      let supervisorName = isAdminOrAssistant ? MAIN_ADMIN_SUPERVISOR_NAME : mySupName;
       let supervisorUid = actorUid;
 
-      if (isMainAdmin && supInput) {
+      if (isAdminOrAssistant && supInput) {
         const matchedSup = supervisors.find(
           (s) =>
             s.name.trim().toLowerCase() === supInput.toLowerCase() ||
@@ -354,14 +355,14 @@ export function ExcelWorkerImportCard({
         'اسم العامل': 'محمد أحمد محمود',
         'خط الإنتاج': sampleLineName,
         'البريد الإلكتروني': '',
-        ...(isMainAdmin ? { المشرف: MAIN_ADMIN_SUPERVISOR_NAME } : {}),
+        ...(isAdminOrAssistant ? { المشرف: MAIN_ADMIN_SUPERVISOR_NAME } : {}),
       },
       {
         'كود العامل': '2002',
         'اسم العامل': 'محمود علي حسن',
         'خط الإنتاج': lines[1]?.name || sampleLineName,
         'البريد الإلكتروني': 'worker@gmail.com',
-        ...(isMainAdmin ? { المشرف: MAIN_ADMIN_SUPERVISOR_NAME } : {}),
+        ...(isAdminOrAssistant ? { المشرف: MAIN_ADMIN_SUPERVISOR_NAME } : {}),
       },
     ];
     const ws = XLSX.utils.json_to_sheet(sampleData);
@@ -470,7 +471,7 @@ export function ExcelWorkerImportCard({
         </button>
       </div>
 
-      {!isMainAdmin && allowedLines.length === 0 ? (
+      {!isAdminOrAssistant && allowedLines.length === 0 ? (
         <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
           لم يتم تحديد خطوط إنتاج مسموحة لحسابك بعد. يرجى مراجعة الأدمن الرئيسي لتحديد خطوطك أو تفعيل صلاحية التحكم الكامل.
         </div>

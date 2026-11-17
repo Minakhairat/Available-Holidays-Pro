@@ -176,5 +176,16 @@ export const DIRTY_DOZEN_PAYLOADS: DirtyDozenCase[] = [
       requesterUid: 'random_user_uid',
       status: 'approved'
     }
+  },
+  {
+    id: 15,
+    name: 'Assistant Admin Privilege Escalation on Supervisors',
+    collection: 'supervisors/sup_target',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    payload: {
+      actorRole: 'assistant_admin',
+      isAssistantAdmin: true
+    }
   }
 ];

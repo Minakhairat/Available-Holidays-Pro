@@ -232,6 +232,10 @@
           "type": "boolean",
           "description": "Whether supervisor can add/select workers under their supervision and manage all lines."
         },
+        "isAssistantAdmin": {
+          "type": "boolean",
+          "description": "Whether this supervisor is granted Assistant Admin privileges by the Main Admin (full JSON backup export/import and system-wide administration)."
+        },
         "allowedLineIds": {
           "type": "array",
           "description": "List of production line IDs this supervisor is explicitly allowed to control."

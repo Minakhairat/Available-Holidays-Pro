@@ -27,6 +27,7 @@ interface AuthContextValue {
   supervisorRecord: Supervisor | null;
   isMainAdmin: boolean;
   isSupervisor: boolean;
+  isAssistantAdmin: boolean;
   authReady: boolean;
   signingIn: boolean;
   authError: string | null;
@@ -50,6 +51,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user?.email?.toLowerCase() === MAIN_ADMIN_EMAIL.toLowerCase();
 
   const isSupervisor = Boolean(supervisorRecord?.active);
+  const isAssistantAdmin = Boolean(
+    !isMainAdmin && supervisorRecord?.active && supervisorRecord?.isAssistantAdmin
+  );
 
   const syncSignedInUser = async (firebaseUser: User) => {
     const email = (firebaseUser.email || '').toLowerCase();
@@ -235,6 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         supervisorRecord,
         isMainAdmin,
         isSupervisor,
+        isAssistantAdmin,
         authReady,
         signingIn,
         authError,

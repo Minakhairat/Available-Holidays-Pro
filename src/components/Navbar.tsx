@@ -26,7 +26,7 @@ export function Navbar({
   onOpenNotifications,
   currentWorker,
 }: NavbarProps) {
-  const { user, isMainAdmin, isSupervisor, signOut } = useAuth();
+  const { user, isMainAdmin, isSupervisor, isAssistantAdmin, signOut } = useAuth();
   const canAccessAdmin = isMainAdmin || isSupervisor;
 
   const navItems: Array<{ id: AppView; label: string; icon: typeof CalendarDays }> = [
@@ -39,9 +39,11 @@ export function Navbar({
   const displayIdentity =
     isMainAdmin
       ? 'الأدمن الرئيسي'
-      : isSupervisor
-        ? 'مشرف'
-        : currentWorker?.name || user?.displayName || 'مستخدم';
+      : isAssistantAdmin
+        ? 'أدمن مساعد'
+        : isSupervisor
+          ? 'مشرف'
+          : currentWorker?.name || user?.displayName || 'مستخدم';
 
   return (
     <>

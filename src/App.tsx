@@ -25,7 +25,8 @@ import { MAIN_ADMIN_SUPERVISOR_ID } from './lib/seedData';
 import { canSupervisorControlLine } from './lib/permissions';
 
 function MainAppShell() {
-  const { user, supervisorRecord, isMainAdmin, isSupervisor, authReady } = useAuth();
+  const { user, supervisorRecord, isMainAdmin, isSupervisor, isAssistantAdmin, authReady } =
+    useAuth();
   const {
     lines,
     workers,
@@ -81,13 +82,14 @@ function MainAppShell() {
     [notifications]
   );
 
+  const isAdminOrAssistant = isMainAdmin || isAssistantAdmin;
   const mySupId = supervisorRecord?.id || MAIN_ADMIN_SUPERVISOR_ID;
   const pendingAdminBadge = useMemo(() => {
     if (!isMainAdmin && !isSupervisor) return 0;
     const pendingLeaves = leaveRequests.filter((r) => {
       if (r.status !== LeaveRequestStatus.PENDING) return false;
       return (
-        isMainAdmin ||
+        isAdminOrAssistant ||
         canSupervisorControlLine(r.lineId, false, supervisorRecord) ||
         r.supervisorId === mySupId
       );
@@ -95,18 +97,19 @@ function MainAppShell() {
     const pendingSwaps = swapRequests.filter((s) => {
       if (s.status !== SwapRequestStatus.PENDING_SUPERVISOR) return false;
       return (
-        isMainAdmin ||
+        isAdminOrAssistant ||
         canSupervisorControlLine(s.lineId, false, supervisorRecord) ||
         s.fromSupervisorId === mySupId ||
         s.toSupervisorId === mySupId
       );
     }).length;
-    const pendingLinks = isMainAdmin
+    const pendingLinks = isAdminOrAssistant
       ? workerLinkRequests.filter((r) => r.status === WorkerLinkRequestStatus.PENDING).length
       : 0;
     return pendingLeaves + pendingSwaps + pendingLinks;
   }, [
     isMainAdmin,
+    isAdminOrAssistant,
     isSupervisor,
     supervisorRecord,
     leaveRequests,
@@ -189,6 +192,7 @@ function MainAppShell() {
             userEmail={user.email || ''}
             isMainAdmin={isMainAdmin}
             isSupervisor={isSupervisor}
+            isAssistantAdmin={isAssistantAdmin}
             loading={loading}
             onOpenMonthlyForLine={(lineId) => {
               setSelectedLineId(lineId);
@@ -258,8 +262,10 @@ function MainAppShell() {
             workerLinkRequests={workerLinkRequests}
             isMainAdmin={isMainAdmin}
             isSupervisor={isSupervisor}
+            isAssistantAdmin={isAssistantAdmin}
             supervisorRecord={supervisorRecord}
             actorUid={user.uid}
+            actorEmail={user.email || ''}
             actorName={actorName}
             onSuccessToast={showToast}
           />
